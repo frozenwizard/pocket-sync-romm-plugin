@@ -627,7 +627,7 @@ Each milestone is small, tested commits, with its tests passing before the next 
 
 ## 20. References
 
-- [GLOSSARY.md](../GLOSSARY.md), [ADR 0001](adr/0001-pocket-saves-stay-separate.md), [save compatibility research](research/save-compatibility.md)
+- [GLOSSARY.md](../GLOSSARY.md), [ADR 0001](adr/0001-pocket-saves-stay-separate.md), [save compatibility research](research/save-compatibility.md), [RomM API research](research/romm-api.md)
 - Pocket Sync: <https://github.com/neil-morrison44/pocket-sync> (plugin host in `src-tauri/src/commands/plugins.rs`; plugins since v6.0.0)
 - Plugin interface and `demo_host`: <https://github.com/openfpga-library/pocket-plugin>
 - Extism: <https://extism.org>
