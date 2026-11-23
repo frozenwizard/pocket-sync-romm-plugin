@@ -1,0 +1,5 @@
+[workspace]
+members = ["plugin"]
+# Plain `cargo build` and `cargo test` skip the test host, which pulls in the Extism runtime.
+default-members = ["plugin"]
+resolver = "3"
