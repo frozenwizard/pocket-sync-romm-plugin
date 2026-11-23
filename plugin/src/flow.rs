@@ -3,14 +3,29 @@
 
 use crate::ui::{self, HostMessage, Key, MenuChoice, PluginMessage, Strings};
 
-/// The first question of a run.
-pub fn start(strings: &Strings) -> PluginMessage {
-    ui::menu(strings)
+/// What a run remembers between calls. Later phases add the plan, pending conflicts and claimed
+/// requests.
+pub struct Run {
+    strings: Strings,
 }
 
-/// Acts on Pocket Sync's reply and returns the next question, in `strings`' language. `log` writes a
-/// line to the run's log.
-pub fn handle(message: HostMessage, strings: &Strings, mut log: impl FnMut(&str)) -> PluginMessage {
+impl Run {
+    /// A new run, shown in `locale`.
+    pub fn new(locale: &str) -> Self {
+        Run {
+            strings: Strings::new(locale),
+        }
+    }
+}
+
+/// The first question of a run.
+pub fn start(run: &Run) -> PluginMessage {
+    ui::menu(&run.strings)
+}
+
+/// Acts on Pocket Sync's reply and returns the next question. `log` writes a line to the run's log.
+pub fn handle(message: HostMessage, run: &mut Run, mut log: impl FnMut(&str)) -> PluginMessage {
+    let strings = &run.strings;
     match message {
         HostMessage::Kill => PluginMessage::Exit,
         HostMessage::Answer { name, value } => {
@@ -45,13 +60,15 @@ mod tests {
             name: name.into(),
             value: value.into(),
         };
-        let reply = handle(message, &english(), |line| lines.push(line.to_string()));
+        let reply = handle(message, &mut Run::new("en-US"), |line| {
+            lines.push(line.to_string())
+        });
         (reply, lines)
     }
 
     #[test]
     fn start_shows_the_menu() {
-        assert_eq!(start(&english()), ui::menu(&english()));
+        assert_eq!(start(&Run::new("en-US")), ui::menu(&english()));
     }
 
     #[test]
@@ -83,7 +100,7 @@ mod tests {
     #[test]
     fn kill_ends_the_run() {
         assert_eq!(
-            handle(HostMessage::Kill, &english(), |_| {}),
+            handle(HostMessage::Kill, &mut Run::new("en-US"), |_| {}),
             PluginMessage::Exit
         );
     }

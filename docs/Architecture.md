@@ -75,7 +75,7 @@ A plugin is Rust compiled to WebAssembly (`wasm32-wasip1`) with [Extism](https:/
 | Area | What the plugin gets | Effect on this design |
 |---|---|---|
 | Entry points | `start()` and `handle_response(HostMessage)`, each returning a `PluginMessage` | The plugin is a state machine: every question ends a call ([section 12](#12-control-flow)) |
-| Instance | One Extism plugin instance per run, used for `start` and every `handle_response`, dropped on `Exit`, an error or Stop | A run's state can live in memory, if Extism doesn't reset it between calls (to confirm in M0) |
+| Instance | One Extism plugin instance per run, used for `start` and every `handle_response`, dropped on `Exit`, an error or Stop | A run's state lives in memory: Extism resets an instance only after a call to `_start`, which the plugin doesn't export |
 | User interface | `PluginMessage::Choice { name, query, choices }` (one button per choice), `Text { name, query }`, `Exit`; `print_msg` writes to a log | Menus, confirmations and conflict questions are buttons; progress is log lines; no game lists or box art |
 | Answers | `HostMessage::Answer { name, value }` or `Kill` | `Kill` only arrives while the plugin waits for an answer |
 | Stopping | Pocket Sync's Stop cancels the plugin at once, even mid-call (Extism cancel handle) | Every write must survive being cut off ([section 13](#13-safety-rules)) |
@@ -507,7 +507,7 @@ Designed now, built in M6.
 
 Pocket Sync calls `start()` once, then `handle_response()` with each answer, and shows whatever question the plugin returns. A question can only be asked by returning from a call. So:
 
-- The run's state (phase, plan, pending conflict list, claimed requests) lives in the plugin instance between calls. Pocket Sync keeps one instance per run; that Extism doesn't reset its memory between calls is to be confirmed in M0. If it does, the state goes to `host/tmp/run.json` between calls.
+- The run's state (phase, plan, pending conflict list, claimed requests) lives in the plugin's memory between calls, held by `lib`. Pocket Sync keeps one instance per run, and Extism resets an instance's memory only after a call to `_start`, which a Rust `cdylib` doesn't export (it exports `_initialize`). Each run gets a new instance, so nothing carries over from the last run. `lib` also drops the state when the plugin returns `Exit`, and an answer that arrives with no run is an error, not a new run.
 - Long phases (planning, transfer) run inside one call and report progress through `print_msg`.
 - A phase that needs answers (confirmation, conflicts) returns a question and continues in the next `handle_response`.
 - Questions are named after their phase and subject (`confirm-plan`, `save-conflict:1234`), so a stale or unexpected answer is recognised and ignored.
@@ -618,12 +618,11 @@ Each milestone is small, tested commits, with its tests passing before the next 
 
 ## 19. Open questions
 
-1. **Extism memory between calls:** confirm in M0 that a run's state survives between `handle_response` calls; otherwise keep it in `host/tmp/run.json`.
-2. **GBA clock files:** v1 leaves `.rtc` files alone. Revisit with shared saves.
-3. **Free space:** ask Pocket Sync's author for a host function that reports the card's free space?
-4. **Install request expiry:** a README note for now; revisit if users lose requests.
-5. **Shared saves:** convert in the plugin or through RomM's sigil; which Game Boy layout to write (gambatte, used by Rommarch and the web player, or mGBA, used by RomP); whether sharing is a per-Pocket setting; how conflicts with libretro clients work in `autosave`. Also confirm whether the Pocket's timestamp is UTC or local time.
-6. **Mappings and cores:** RomM's system names for PC Engine and the later cartridge systems; core quirks such as PC Engine's MB128 save size.
+1. **GBA clock files:** v1 leaves `.rtc` files alone. Revisit with shared saves.
+2. **Free space:** ask Pocket Sync's author for a host function that reports the card's free space?
+3. **Install request expiry:** a README note for now; revisit if users lose requests.
+4. **Shared saves:** convert in the plugin or through RomM's sigil; which Game Boy layout to write (gambatte, used by Rommarch and the web player, or mGBA, used by RomP); whether sharing is a per-Pocket setting; how conflicts with libretro clients work in `autosave`. Also confirm whether the Pocket's timestamp is UTC or local time.
+5. **Mappings and cores:** RomM's system names for PC Engine and the later cartridge systems; core quirks such as PC Engine's MB128 save size.
 
 ## 20. References
 
