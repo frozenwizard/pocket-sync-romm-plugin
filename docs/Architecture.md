@@ -28,7 +28,7 @@ No tool does this today. Pocket Sync manages cores, firmware and save backups, b
 - **Shared saves:** carry a game on between the Pocket and Rommarch, RomP or RomM's web player, switched on one system at a time after testing on a real Pocket ([ADR 0001](adr/0001-pocket-saves-stay-separate.md), [10.7](#107-shared-saves-later)).
 - **Restore deleted saves:** a Settings option that brings back RomM's copy of saves deleted on the Pocket, one button per game plus **All**.
 - **BIOS files** from RomM's firmware.
-- **Translations** (v1 is English only).
+- **Translations** into other languages (v1 is English only). Support for them is built in M0.
 - **Save states** (the Pocket's Memories).
 - **pupdate** as a second plugin host.
 
@@ -184,7 +184,7 @@ The plugin is one Rust crate with modules split along these lines. Logic that do
 |---|---|
 | `lib` (entry) | `start` and `handle_response`; holds the run's state; turns errors into log lines and a menu |
 | `flow` | The state machine: which phase runs next and which question to ask ([section 12](#12-control-flow)) |
-| `ui` | Building `Choice` and `Text` messages, naming questions, logging; English strings kept in one place for later translation |
+| `ui` | Building `Choice` and `Text` messages, naming questions, logging; every string looked up by the `locale` config key, with English as the fallback. Pocket Sync sends back the button's text as the answer, so answers are matched to the choice they stand for, never to English text |
 | `romm::client` | HTTP over Extism: base URL, bearer token, JSON, error mapping (401, 403, 404, 409, 429), multipart bodies, `Range` downloads |
 | `romm::pairing` | Device pairing: init, open the approval page, poll, store the token |
 | `romm::api` | Typed calls: heartbeat, devices, collections, games, files, saves, installs |
@@ -607,14 +607,14 @@ Each milestone is small, tested commits, with its tests passing before the next 
 
 | # | Milestone | Done when |
 |---|---|---|
-| M0 | Skeleton | The plugin builds for `wasm32-wasip1`, runs in `demo_host`, shows a menu, logs, and keeps state between calls |
+| M0 | Skeleton | The plugin builds for `wasm32-wasip1`, runs in `demo_host`, shows a menu, logs, and keeps state between calls. Its text is looked up by the `locale` key with English as the fallback, and answers are matched to the choice they stand for, not to English text |
 | M1 | Server and pairing | Pocket ID, address prompt (per computer), heartbeat check, pairing with polling, token in `host/`, permission check, wrong-server check |
 | M2 | Games: add | Choose or create the Pocket collection; plan and copy GB, GBC and GBA games; manifest; staging; `.part` then rename |
 | M3 | Games: update, rename, remove, adopt | Hash-based updates, renames, confirmed removals, adopting existing files, recovery after a cut-off run, `Range` downloads |
 | M4 | Saves | Pocket slot, decisions, conflicts, backups, final sync for removed games |
 | M5 | First release | Every mapped cartridge system, README, `plugin.json`, release, a real-Pocket test on all three operating systems |
 | M6 | Install on device | Accept installs, claim, add to the collection, report outcomes |
-| Later | Shared saves (per system), Restore deleted saves (Settings), BIOS from RomM's firmware, translations, save states, pupdate | |
+| Later | Shared saves (per system), Restore deleted saves (Settings), BIOS from RomM's firmware, translations into other languages, save states, pupdate | |
 
 ## 19. Open questions
 
