@@ -1,8 +1,10 @@
-//! The messages exchanged with Pocket Sync, and the English strings in them, kept in one place for
-//! later translation.
+//! The messages exchanged with Pocket Sync, and the questions in them.
+
+mod strings;
 
 use extism_pdk::{FromBytes, Json, ToBytes};
 use serde::{Deserialize, Serialize};
+pub use strings::{Key, Strings};
 
 /// A question for Pocket Sync to show, or `Exit` to end the run.
 #[derive(Debug, PartialEq, Serialize, ToBytes)]
@@ -26,32 +28,58 @@ pub enum HostMessage {
 }
 
 pub const MENU: &str = "menu";
-pub const SYNC_NOW: &str = "Sync now";
-pub const SETTINGS: &str = "Settings";
-pub const EXIT: &str = "Exit";
 
-pub const SYNC_NOT_READY: &str = "Syncing isn't available yet.";
-pub const SETTINGS_NOT_READY: &str = "Settings aren't available yet.";
+/// A choice on the menu.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MenuChoice {
+    SyncNow,
+    Settings,
+    Exit,
+}
 
-pub fn menu() -> PluginMessage {
+impl MenuChoice {
+    const ALL: [MenuChoice; 3] = [MenuChoice::SyncNow, MenuChoice::Settings, MenuChoice::Exit];
+
+    fn key(self) -> Key {
+        match self {
+            MenuChoice::SyncNow => Key::SyncNow,
+            MenuChoice::Settings => Key::Settings,
+            MenuChoice::Exit => Key::Exit,
+        }
+    }
+}
+
+pub fn menu(strings: &Strings) -> PluginMessage {
     PluginMessage::Choice {
         name: MENU.into(),
-        query: "What would you like to do?".into(),
-        choices: vec![SYNC_NOW.into(), SETTINGS.into(), EXIT.into()],
+        query: strings.get(Key::MenuQuery).into(),
+        choices: MenuChoice::ALL
+            .into_iter()
+            .map(|choice| strings.get(choice.key()).into())
+            .collect(),
     }
+}
+
+/// The menu choice labelled `value` in `strings`' language. Pocket Sync sends back the label, not the
+/// choice.
+pub fn menu_choice(strings: &Strings, value: &str) -> Option<MenuChoice> {
+    MenuChoice::ALL
+        .into_iter()
+        .find(|choice| strings.get(choice.key()) == value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use extism_pdk::json::{from_str, json, to_value};
+    use std::collections::BTreeSet;
 
     // Pocket Sync has its own copies of these enums, so the JSON is pinned here.
 
     #[test]
     fn messages_are_sent_as_pocket_sync_reads_them() {
         assert_eq!(
-            to_value(menu()).unwrap(),
+            to_value(menu(&Strings::new("en-US"))).unwrap(),
             json!({"Choice": {
                 "name": "menu",
                 "query": "What would you like to do?",
@@ -70,5 +98,46 @@ mod tests {
         ));
         let kill = from_str(r#""Kill""#).unwrap();
         assert!(matches!(kill, HostMessage::Kill));
+    }
+
+    #[test]
+    fn menu_answers_are_matched_to_their_choice() {
+        let english = Strings::new("en-US");
+        for choice in MenuChoice::ALL {
+            assert_eq!(
+                menu_choice(&english, english.get(choice.key())),
+                Some(choice)
+            );
+        }
+        assert_eq!(menu_choice(&english, "Nope"), None);
+    }
+
+    // Otherwise pressing the second of two same-labelled buttons would run the first one's action.
+    #[test]
+    fn menu_labels_differ_in_every_language() {
+        for (tag, _) in strings::LOCALES {
+            let language = Strings::new(tag);
+            let labels: BTreeSet<_> = MenuChoice::ALL
+                .into_iter()
+                .map(|choice| language.get(choice.key()))
+                .collect();
+            assert_eq!(labels.len(), MenuChoice::ALL.len(), "{tag}: {labels:?}");
+        }
+    }
+
+    #[test]
+    fn menu_answers_are_matched_in_the_language_shown() {
+        let locales = [
+            (
+                "en",
+                r#"{"menu": {"sync_now": "Sync now", "settings": "Settings", "exit": "Exit"}}"#,
+            ),
+            ("de", r#"{"menu": {"exit": "Beenden"}}"#),
+        ];
+        let german = Strings::with_locales("de-DE", &locales);
+        assert_eq!(menu_choice(&german, "Beenden"), Some(MenuChoice::Exit));
+        assert_eq!(menu_choice(&german, "Exit"), None);
+        // Untranslated labels are shown, and matched, in English.
+        assert_eq!(menu_choice(&german, "Settings"), Some(MenuChoice::Settings));
     }
 }

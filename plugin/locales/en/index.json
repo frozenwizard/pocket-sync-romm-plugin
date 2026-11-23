@@ -1,0 +1,12 @@
+{
+  "menu": {
+    "query": "What would you like to do?",
+    "sync_now": "Sync now",
+    "settings": "Settings",
+    "exit": "Exit"
+  },
+  "log": {
+    "sync_not_ready": "Syncing isn't available yet.",
+    "settings_not_ready": "Settings aren't available yet."
+  }
+}

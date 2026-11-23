@@ -83,7 +83,7 @@ A plugin is Rust compiled to WebAssembly (`wasm32-wasip1`) with [Extism](https:/
 | `host/` | `<Pocket Sync app data>/<owner>-<repo>/host`: created at install, kept across plugin updates, deleted at uninstall, never cleaned otherwise | The plugin cleans its own temp files. On Windows it's in the roaming profile, so no big permanent cache. |
 | Network | HTTP through Extism, only to hosts in `plugin.json`'s `allowed_hosts` (patterns matched against the host name, port excluded) | `"allowed_hosts": ["*"]`, since every user's RomM is at a different address |
 | Response size | 50 MB per HTTP response (Extism's default; Pocket Sync doesn't change it) | Large files are downloaded in pieces with `Range` |
-| Other | `open_url` opens the browser; config key `locale` gives the user's language; one thread; `std::thread::sleep` works; no time or memory limits set | Pairing opens RomM's approval page and polls; no WebSockets; no free-space query |
+| Other | `open_url` opens the browser; config key `locale` gives the system's language, even when Pocket Sync's "Always use English (US)" is ticked (`demo_host` doesn't set it); one thread; `std::thread::sleep` works; no time or memory limits set | Pairing opens RomM's approval page and polls; no WebSockets; no free-space query |
 | Install and update | The user adds the GitHub repo link; Pocket Sync fetches the latest release's `plugin.wasm` and `plugin.json` | Releases are the distribution channel ([section 17](#17-build-and-release)) |
 
 ### 3.3 RomM
@@ -182,9 +182,9 @@ The plugin is one Rust crate with modules split along these lines. Logic that do
 
 | Module | Responsibility |
 |---|---|
-| `lib` (entry) | `start` and `handle_response`; holds the run's state; turns errors into log lines and a menu |
+| `lib` (entry) | `start` and `handle_response`; holds the run's state; turns errors into log lines and a menu; picks the language, fixed at `en-US` until Pocket Sync passes the one the user chose |
 | `flow` | The state machine: which phase runs next and which question to ask ([section 12](#12-control-flow)) |
-| `ui` | Building `Choice` and `Text` messages, naming questions, logging; every string looked up by the `locale` config key, with English as the fallback. Pocket Sync sends back the button's text as the answer, so answers are matched to the choice they stand for, never to English text |
+| `ui` | Building `Choice` and `Text` messages, naming questions, logging; every string looked up in the bundled `locales/<lang>/index.json` files (Pocket Sync's layout), each falling back from `de-AT` to `de` to English. Pocket Sync sends back the button's text as the answer, so answers are matched to the choice they stand for, never to English text |
 | `romm::client` | HTTP over Extism: base URL, bearer token, JSON, error mapping (401, 403, 404, 409, 429), multipart bodies, `Range` downloads |
 | `romm::pairing` | Device pairing: init, open the approval page, poll, store the token |
 | `romm::api` | Typed calls: heartbeat, devices, collections, games, files, saves, installs |
@@ -607,7 +607,7 @@ Each milestone is small, tested commits, with its tests passing before the next 
 
 | # | Milestone | Done when |
 |---|---|---|
-| M0 | Skeleton | The plugin builds for `wasm32-wasip1`, runs in `demo_host`, shows a menu, logs, and keeps state between calls. Its text is looked up by the `locale` key with English as the fallback, and answers are matched to the choice they stand for, not to English text |
+| M0 | Skeleton | The plugin builds for `wasm32-wasip1`, runs in `demo_host`, shows a menu, logs, and keeps state between calls. Its text comes from bundled locale files with English as the fallback (the language is fixed at `en-US` for now), and answers are matched to the choice they stand for, not to English text |
 | M1 | Server and pairing | Pocket ID, address prompt (per computer), heartbeat check, pairing with polling, token in `host/`, permission check, wrong-server check |
 | M2 | Games: add | Choose or create the Pocket collection; plan and copy GB, GBC and GBA games; manifest; staging; `.part` then rename |
 | M3 | Games: update, rename, remove, adopt | Hash-based updates, renames, confirmed removals, adopting existing files, recovery after a cut-off run, `Range` downloads |

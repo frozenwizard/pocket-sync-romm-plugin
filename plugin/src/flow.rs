@@ -1,30 +1,33 @@
 //! The state machine: what each answer leads to, and which question comes next.
 //! See Architecture.md, section 12.
 
-use crate::ui::{self, HostMessage, PluginMessage};
+use crate::ui::{self, HostMessage, Key, MenuChoice, PluginMessage, Strings};
 
 /// The first question of a run.
-pub fn start() -> PluginMessage {
-    ui::menu()
+pub fn start(strings: &Strings) -> PluginMessage {
+    ui::menu(strings)
 }
 
-/// Acts on Pocket Sync's reply and returns the next question. `log` writes a line to the run's log.
-pub fn handle(message: HostMessage, mut log: impl FnMut(&str)) -> PluginMessage {
+/// Acts on Pocket Sync's reply and returns the next question, in `strings`' language. `log` writes a
+/// line to the run's log.
+pub fn handle(message: HostMessage, strings: &Strings, mut log: impl FnMut(&str)) -> PluginMessage {
     match message {
         HostMessage::Kill => PluginMessage::Exit,
-        HostMessage::Answer { name, value } => match (name.as_str(), value.as_str()) {
-            (ui::MENU, ui::SYNC_NOW) => {
-                log(ui::SYNC_NOT_READY);
-                ui::menu()
+        HostMessage::Answer { name, value } => {
+            match (name.as_str(), ui::menu_choice(strings, &value)) {
+                (ui::MENU, Some(MenuChoice::SyncNow)) => {
+                    log(strings.get(Key::SyncNotReady));
+                    ui::menu(strings)
+                }
+                (ui::MENU, Some(MenuChoice::Settings)) => {
+                    log(strings.get(Key::SettingsNotReady));
+                    ui::menu(strings)
+                }
+                (ui::MENU, Some(MenuChoice::Exit)) => PluginMessage::Exit,
+                // A stale or unexpected answer is ignored.
+                _ => ui::menu(strings),
             }
-            (ui::MENU, ui::SETTINGS) => {
-                log(ui::SETTINGS_NOT_READY);
-                ui::menu()
-            }
-            (ui::MENU, ui::EXIT) => PluginMessage::Exit,
-            // A stale or unexpected answer is ignored.
-            _ => ui::menu(),
-        },
+        }
     }
 }
 
@@ -32,46 +35,67 @@ pub fn handle(message: HostMessage, mut log: impl FnMut(&str)) -> PluginMessage 
 mod tests {
     use super::*;
 
+    fn english() -> Strings {
+        Strings::new("en-US")
+    }
+
     fn answer(name: &str, value: &str) -> (PluginMessage, Vec<String>) {
         let mut lines = Vec::new();
         let message = HostMessage::Answer {
             name: name.into(),
             value: value.into(),
         };
-        let reply = handle(message, |line| lines.push(line.to_string()));
+        let reply = handle(message, &english(), |line| lines.push(line.to_string()));
         (reply, lines)
     }
 
     #[test]
     fn start_shows_the_menu() {
-        assert_eq!(start(), ui::menu());
+        assert_eq!(start(&english()), ui::menu(&english()));
     }
 
     #[test]
     fn sync_now_is_not_available_yet() {
-        let not_ready = vec![ui::SYNC_NOT_READY.to_string()];
-        assert_eq!(answer(ui::MENU, ui::SYNC_NOW), (ui::menu(), not_ready));
+        let english = english();
+        let not_ready = vec![english.get(Key::SyncNotReady).to_string()];
+        assert_eq!(
+            answer(ui::MENU, english.get(Key::SyncNow)),
+            (ui::menu(&english), not_ready)
+        );
     }
 
     #[test]
     fn settings_are_not_available_yet() {
-        let not_ready = vec![ui::SETTINGS_NOT_READY.to_string()];
-        assert_eq!(answer(ui::MENU, ui::SETTINGS), (ui::menu(), not_ready));
+        let english = english();
+        let not_ready = vec![english.get(Key::SettingsNotReady).to_string()];
+        assert_eq!(
+            answer(ui::MENU, english.get(Key::Settings)),
+            (ui::menu(&english), not_ready)
+        );
     }
 
     #[test]
     fn exit_ends_the_run() {
-        assert_eq!(answer(ui::MENU, ui::EXIT), (PluginMessage::Exit, vec![]));
+        let exit = english().get(Key::Exit).to_string();
+        assert_eq!(answer(ui::MENU, &exit), (PluginMessage::Exit, vec![]));
     }
 
     #[test]
     fn kill_ends_the_run() {
-        assert_eq!(handle(HostMessage::Kill, |_| {}), PluginMessage::Exit);
+        assert_eq!(
+            handle(HostMessage::Kill, &english(), |_| {}),
+            PluginMessage::Exit
+        );
     }
 
     #[test]
     fn unexpected_answers_show_the_menu_again() {
-        assert_eq!(answer(ui::MENU, "Nope"), (ui::menu(), vec![]));
-        assert_eq!(answer("confirm-plan", "Sync"), (ui::menu(), vec![]));
+        assert_eq!(answer(ui::MENU, "Nope"), (ui::menu(&english()), vec![]));
+        // A menu label sent to another question is still ignored.
+        let exit = english().get(Key::Exit).to_string();
+        assert_eq!(
+            answer("confirm-plan", &exit),
+            (ui::menu(&english()), vec![])
+        );
     }
 }

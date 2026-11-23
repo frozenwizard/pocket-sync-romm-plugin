@@ -24,6 +24,8 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - run: cargo test
+
       - run: cargo build -p plugin --target wasm32-wasip1 --release
 
       - name: "Add WASM & JSON to release"

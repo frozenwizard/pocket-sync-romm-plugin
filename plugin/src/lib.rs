@@ -2,7 +2,12 @@ mod flow;
 mod ui;
 
 use extism_pdk::*;
-use ui::{HostMessage, PluginMessage};
+use ui::{HostMessage, PluginMessage, Strings};
+
+/// The language the plugin shows. Pocket Sync's `locale` config key is the system's language, even when
+/// its "Always use English (US)" box is ticked, so this stays fixed until Pocket Sync passes the
+/// language the user chose.
+const LOCALE: &str = "en-US";
 
 #[host_fn]
 unsafe extern "ExtismHost" {
@@ -19,10 +24,10 @@ fn log(line: &str) {
 
 #[plugin_fn]
 pub fn start() -> FnResult<PluginMessage> {
-    Ok(flow::start())
+    Ok(flow::start(&Strings::new(LOCALE)))
 }
 
 #[plugin_fn]
 pub fn handle_response(message: HostMessage) -> FnResult<PluginMessage> {
-    Ok(flow::handle(message, log))
+    Ok(flow::handle(message, &Strings::new(LOCALE), log))
 }
