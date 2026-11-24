@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # One pull request a month for minor and patch updates, so they don't pile up as separate PRs.
+  # Each major update gets its own PR, so a breaking one can't hold back the rest.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: [minor, patch]

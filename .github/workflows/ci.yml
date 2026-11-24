@@ -1,0 +1,47 @@
+name: CI
+
+# The checks in CONTRIBUTING.md, on every pull request and every push to main.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its run still in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Installs or updates to the latest stable, so CI runs the same Clippy as an up-to-date
+      # contributor. rust-toolchain.toml lists the same target and components.
+      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy --target wasm32-wasip1
+
+      - id: rust
+        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+
+      # Keyed by the Rust version as well as Cargo.lock: a build from an older compiler is no use.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-rust-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-${{ steps.rust.outputs.version }}-
+
+      # --locked fails the run when Cargo.lock is out of date, instead of updating it.
+      - run: cargo fmt --check
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo clippy --locked --target wasm32-wasip1 -- -D warnings
+      - run: cargo build --locked -p plugin --release --target wasm32-wasip1
