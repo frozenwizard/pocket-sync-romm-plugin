@@ -7,33 +7,14 @@ A [Pocket Sync](https://github.com/neil-morrison44/pocket-sync) plugin that sync
 | Path | What it is |
 |---|---|
 | `plugin/` | The plugin crate, built to `plugin.wasm`, and its `plugin.json` |
-| `test_host/` | A headless host that loads the plugin the way Pocket Sync does and answers its questions from a script |
+| `docs/` | The design (`Architecture.md`), decision records (`adr/`) and research notes (`research/`) |
 
-## Build
+## Build, test and run
 
-```sh
-cargo build -p plugin --release --target wasm32-wasip1
-```
-
-This writes `target/wasm32-wasip1/release/plugin.wasm`, and `plugin/build.rs` copies `plugin.json` beside it. `rust-toolchain.toml` installs the `wasm32-wasip1` target.
-
-## Test
-
-```sh
-cargo test
-```
-
-Tests run on your computer's own target, not wasm. Plain `cargo` commands only build `plugin`, so the test host's Extism runtime isn't compiled unless you ask for it.
-
-## Run in the test host
-
-```sh
-mkdir -p target/run/pocket target/run/host
-cargo run -p test_host -- target/wasm32-wasip1/release target/run/pocket target/run/host
-```
-
-The three folders are the plugin, the Pocket's SD card and the plugin's `host/` folder. Anything after them answers the plugin's questions in turn, and `KILL` sends `Kill`.
+[CONTRIBUTING.md](CONTRIBUTING.md) covers building the plugin, the checks every change passes, and running it in `demo_host` or Pocket Sync.
 
 ## Release
 
 Publish a normal GitHub release, not a draft or a pre-release. `.github/workflows/add_to_release.yml` builds the plugin and attaches `plugin.wasm` and `plugin.json`, which is what Pocket Sync installs. In Pocket Sync, add the plugin under **Plugins → Add** with this repo's URL.
+
+The repo has to be public first. Pocket Sync downloads release files without its GitHub token, so it can't install from a private repo. Until the first release, [CONTRIBUTING.md](CONTRIBUTING.md#in-pocket-sync) shows how to run a local build in Pocket Sync.
