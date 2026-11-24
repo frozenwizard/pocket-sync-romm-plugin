@@ -1,0 +1,75 @@
+name: Bug report
+description: Something in RomM Sync doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. For a security problem, [report it privately](https://github.com/frozenwizard/pocket-sync-romm-plugin/security/advisories/new) instead, as SECURITY.md describes.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What went wrong, and what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you chose in the plugin, in order, starting from opening it in Pocket Sync.
+      placeholder: |
+        1. Connect
+        2. Sync now
+        3. …
+    validations:
+      required: true
+
+  - type: input
+    id: romm-sync-version
+    attributes:
+      label: RomM Sync version
+      description: Shown on Pocket Sync's Plugins page.
+    validations:
+      required: true
+
+  - type: input
+    id: pocket-sync-version
+    attributes:
+      label: Pocket Sync version
+    validations:
+      required: true
+
+  - type: input
+    id: romm-version
+    attributes:
+      label: RomM version
+      description: Shown in RomM's settings, and in the plugin's log after it connects.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: computer
+    attributes:
+      label: Computer
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Copy the log Pocket Sync showed for the run. RomM Sync never logs its sign-in, but remove anything else you'd rather keep private, such as your server's address.
+      render: text
+
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Anything that might help. Don't attach `romm-sync/server.json` from the card, because it holds your RomM sign-in.

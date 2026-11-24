@@ -1,0 +1,28 @@
+name: Feature request
+description: Something you'd like RomM Sync to do.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The [scope section of the design](https://github.com/frozenwizard/pocket-sync-romm-plugin/blob/main/docs/Architecture.md#2-scope) lists what's planned for later and what isn't planned, with the reasons. It's worth a look first.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: What you're trying to do, and what gets in the way today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like RomM Sync to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Other ways you've tried or considered

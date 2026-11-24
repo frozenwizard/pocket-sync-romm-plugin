@@ -2,6 +2,8 @@
 
 Thanks for helping. RomM Sync is a [Pocket Sync](https://github.com/neil-morrison44/pocket-sync) plugin that keeps an Analogue Pocket's games and saves in step with a [RomM](https://github.com/rommapp/romm) library.
 
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Before you start
 
 - Read [docs/Architecture.md](docs/Architecture.md). It says what the plugin does and how, and [§18](docs/Architecture.md#18-milestones) says which milestone is in progress.
@@ -15,7 +17,7 @@ Thanks for helping. RomM Sync is a [Pocket Sync](https://github.com/neil-morriso
 
 ## Build and check
 
-Run these before opening a pull request. All of them must pass.
+Run these before opening a pull request. All of them must pass. CI (`.github/workflows/ci.yml`) runs the same checks on every pull request.
 
 ```sh
 cargo fmt --check
@@ -54,7 +56,7 @@ cargo run --manifest-path ../pocket-plugin/Cargo.toml -p demo_host -- \
 
 ### In Pocket Sync
 
-Pocket Sync installs plugins only from a release in a public GitHub repo. It downloads the release's files without the GitHub token in its settings (v7.2.1), so a private repo's files fail to download. This repo stays private until its first release, so for now, install pocket-plugin's example plugin and run your build in its place:
+Pocket Sync installs plugins only from a release in a public GitHub repo. It downloads the release's files without the GitHub token in its settings (v7.2.1), so a private repo's files fail to download. This repo has no release yet, so for now, install pocket-plugin's example plugin and run your build in its place:
 
 1. In Pocket Sync, add `https://github.com/openfpga-library/pocket-plugin` under **Plugins → Add**.
 2. Build, then copy `target/wasm32-wasip1/release/plugin.wasm` and `plugin.json` into the example plugin's folder, `openfpga-library-pocket-plugin/`, inside Pocket Sync's data folder:
@@ -69,7 +71,7 @@ Pocket Sync installs plugins only from a release in a public GitHub repo. It dow
 
 Pocket Sync keeps using the copied files until the installed plugin has a newer release. Copy them again after each build, and again if the example plugin publishes a release.
 
-Once this repo is public, add `https://github.com/frozenwizard/pocket-sync-romm-plugin` instead, and copy local builds into its folder, `frozenwizard-pocket-sync-romm-plugin/`.
+Once this repo has a release, add `https://github.com/frozenwizard/pocket-sync-romm-plugin` instead, and copy local builds into its folder, `frozenwizard-pocket-sync-romm-plugin/`.
 
 ## Code conventions
 
@@ -94,6 +96,8 @@ The layout matches Pocket Sync's, so its translation tools work here too. For no
 - Branch off `main`, and keep each pull request to one change.
 - Make small commits, each with its tests passing.
 - In the description, say what changed, why, and how you tested it: tests, `demo_host`, Pocket Sync, or a real Pocket.
+
+Report security problems privately, as [SECURITY.md](SECURITY.md) describes, not in an issue or pull request.
 
 ## License
 
