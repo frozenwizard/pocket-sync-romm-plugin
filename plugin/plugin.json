@@ -1,5 +1,5 @@
 {
   "name": "RomM Sync",
   "description": "Sync games and saves between your RomM library and this Pocket",
-  "allowed_hosts": []
+  "allowed_hosts": ["*"]
 }

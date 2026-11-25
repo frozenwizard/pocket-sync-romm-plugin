@@ -11,7 +11,7 @@ An Analogue Pocket and its SD card, treated as one thing. Its identity lives on 
 _Avoid_: card, SD card (as something separate from the Pocket)
 
 **Computer**:
-A machine running Pocket Sync with the Pocket's card attached. Each computer keeps its own RomM address and sign-in for each Pocket.
+A machine running Pocket Sync with the Pocket's card attached. Any computer can sync the Pocket with no setup, because the RomM address and sign-in are on the card.
 _Avoid_: host, desktop
 
 ### What goes on the Pocket
