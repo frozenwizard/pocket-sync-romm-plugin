@@ -7,15 +7,31 @@ use serde::{Deserialize, Serialize};
 pub use strings::{Key, Strings};
 
 /// A question for Pocket Sync to show, or `Exit` to end the run.
-#[derive(Debug, PartialEq, Serialize, ToBytes)]
+#[derive(Clone, Debug, PartialEq, Serialize, ToBytes)]
 #[encoding(Json)]
 pub enum PluginMessage {
+    /// Answered with one of the buttons in `choices`.
     Choice {
         name: String,
         query: String,
         choices: Vec<String>,
     },
+    /// Answered by typing.
+    Text {
+        name: String,
+        query: String,
+    },
     Exit,
+}
+
+impl PluginMessage {
+    /// The question's name, which comes back with its answer. `Exit` asks nothing.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            PluginMessage::Choice { name, .. } | PluginMessage::Text { name, .. } => Some(name),
+            PluginMessage::Exit => None,
+        }
+    }
 }
 
 /// Pocket Sync's reply to a question: the answer, or `Kill`. `Kill` only arrives while a question is
@@ -27,9 +43,132 @@ pub enum HostMessage {
     Kill,
 }
 
+// The questions' names.
+pub const SERVER: &str = "server";
+pub const BAD_SERVER: &str = "bad-server";
+pub const CONNECT: &str = "connect";
+pub const OPTIONS: &str = "options";
 pub const MENU: &str = "menu";
 
-/// A choice on the menu.
+/// The buttons of a `Choice` question.
+pub trait Choices: Copy + 'static {
+    /// Every button, in the order shown.
+    const ALL: &'static [Self];
+
+    /// The button's label.
+    fn label(self) -> Key;
+}
+
+/// The button labelled `value` in `strings`' language. Pocket Sync sends back the label, not the
+/// button.
+pub fn chosen<C: Choices>(strings: &Strings, value: &str) -> Option<C> {
+    C::ALL
+        .iter()
+        .copied()
+        .find(|choice| strings.get(choice.label()) == value)
+}
+
+/// A `Choice` question named `name`, with a button for each of `C`.
+fn choice<C: Choices>(strings: &Strings, name: &str, query: String) -> PluginMessage {
+    PluginMessage::Choice {
+        name: name.into(),
+        query,
+        choices: C::ALL
+            .iter()
+            .map(|choice| strings.get(choice.label()).into())
+            .collect(),
+    }
+}
+
+/// Asks for the RomM server's address. `current` is the one it replaces, if there is one.
+pub fn server(strings: &Strings, current: Option<&str>) -> PluginMessage {
+    let query = match current {
+        Some(current) => strings.fill(Key::ChangeServerQuery, &[("host", current)]),
+        None => strings.get(Key::ServerQuery).into(),
+    };
+    PluginMessage::Text {
+        name: SERVER.into(),
+        query,
+    }
+}
+
+/// A button on the question after an answer that isn't a server address. Pocket Sync's `Text`
+/// question has no buttons, so this is how the address question is left without an answer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BadServerChoice {
+    TryAgain,
+    Cancel,
+}
+
+impl Choices for BadServerChoice {
+    const ALL: &'static [Self] = &[BadServerChoice::TryAgain, BadServerChoice::Cancel];
+
+    fn label(self) -> Key {
+        match self {
+            BadServerChoice::TryAgain => Key::TryAgain,
+            BadServerChoice::Cancel => Key::Cancel,
+        }
+    }
+}
+
+/// Says the answer to the address question isn't a server address, and offers to try again.
+pub fn bad_server(strings: &Strings) -> PluginMessage {
+    choice::<BadServerChoice>(strings, BAD_SERVER, strings.get(Key::BadHost).into())
+}
+
+/// A button on the first question once the server's address is known.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ConnectChoice {
+    Connect,
+    Options,
+    Exit,
+}
+
+impl Choices for ConnectChoice {
+    const ALL: &'static [Self] = &[
+        ConnectChoice::Connect,
+        ConnectChoice::Options,
+        ConnectChoice::Exit,
+    ];
+
+    fn label(self) -> Key {
+        match self {
+            ConnectChoice::Connect => Key::Connect,
+            ConnectChoice::Options => Key::Options,
+            ConnectChoice::Exit => Key::Exit,
+        }
+    }
+}
+
+/// Offers to connect to the server at `host`.
+pub fn connect(strings: &Strings, host: &str) -> PluginMessage {
+    let query = strings.fill(Key::ConnectQuery, &[("host", host)]);
+    choice::<ConnectChoice>(strings, CONNECT, query)
+}
+
+/// A button in Options.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OptionsChoice {
+    ChangeServer,
+    Back,
+}
+
+impl Choices for OptionsChoice {
+    const ALL: &'static [Self] = &[OptionsChoice::ChangeServer, OptionsChoice::Back];
+
+    fn label(self) -> Key {
+        match self {
+            OptionsChoice::ChangeServer => Key::ChangeServer,
+            OptionsChoice::Back => Key::Back,
+        }
+    }
+}
+
+pub fn options(strings: &Strings) -> PluginMessage {
+    choice::<OptionsChoice>(strings, OPTIONS, strings.get(Key::OptionsQuery).into())
+}
+
+/// A button on the menu.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MenuChoice {
     SyncNow,
@@ -37,10 +176,10 @@ pub enum MenuChoice {
     Exit,
 }
 
-impl MenuChoice {
-    const ALL: [MenuChoice; 3] = [MenuChoice::SyncNow, MenuChoice::Settings, MenuChoice::Exit];
+impl Choices for MenuChoice {
+    const ALL: &'static [Self] = &[MenuChoice::SyncNow, MenuChoice::Settings, MenuChoice::Exit];
 
-    fn key(self) -> Key {
+    fn label(self) -> Key {
         match self {
             MenuChoice::SyncNow => Key::SyncNow,
             MenuChoice::Settings => Key::Settings,
@@ -50,22 +189,7 @@ impl MenuChoice {
 }
 
 pub fn menu(strings: &Strings) -> PluginMessage {
-    PluginMessage::Choice {
-        name: MENU.into(),
-        query: strings.get(Key::MenuQuery).into(),
-        choices: MenuChoice::ALL
-            .into_iter()
-            .map(|choice| strings.get(choice.key()).into())
-            .collect(),
-    }
-}
-
-/// The menu choice labelled `value` in `strings`' language. Pocket Sync sends back the label, not the
-/// choice.
-pub fn menu_choice(strings: &Strings, value: &str) -> Option<MenuChoice> {
-    MenuChoice::ALL
-        .into_iter()
-        .find(|choice| strings.get(choice.key()) == value)
+    choice::<MenuChoice>(strings, MENU, strings.get(Key::MenuQuery).into())
 }
 
 #[cfg(test)]
@@ -73,18 +197,24 @@ mod tests {
     use super::*;
     use extism_pdk::json::{from_str, json, to_value};
     use std::collections::BTreeSet;
+    use std::fmt::Debug;
 
     // Pocket Sync has its own copies of these enums, so the JSON is pinned here.
 
     #[test]
     fn messages_are_sent_as_pocket_sync_reads_them() {
+        let english = Strings::new("en-US");
         assert_eq!(
-            to_value(menu(&Strings::new("en-US"))).unwrap(),
+            to_value(menu(&english)).unwrap(),
             json!({"Choice": {
                 "name": "menu",
                 "query": "What would you like to do?",
                 "choices": ["Sync now", "Settings", "Exit"],
             }})
+        );
+        assert_eq!(
+            to_value(server(&english, None)).unwrap(),
+            json!({"Text": {"name": "server", "query": english.get(Key::ServerQuery)}})
         );
         assert_eq!(to_value(PluginMessage::Exit).unwrap(), json!("Exit"));
     }
@@ -101,32 +231,59 @@ mod tests {
     }
 
     #[test]
-    fn menu_answers_are_matched_to_their_choice() {
+    fn the_current_address_is_in_the_change_question() {
         let english = Strings::new("en-US");
-        for choice in MenuChoice::ALL {
+        let question = server(&english, Some("https://romm.example.com"));
+        let PluginMessage::Text { query, .. } = question else {
+            panic!("{question:?}");
+        };
+        assert!(query.contains("https://romm.example.com"), "{query}");
+    }
+
+    /// Checks each of `C`'s labels is matched back to its button.
+    fn labels_find_their_choice<C: Choices + PartialEq + Debug>() {
+        let english = Strings::new("en-US");
+        for &choice in C::ALL {
             assert_eq!(
-                menu_choice(&english, english.get(choice.key())),
+                chosen::<C>(&english, english.get(choice.label())),
                 Some(choice)
             );
         }
-        assert_eq!(menu_choice(&english, "Nope"), None);
+        assert_eq!(chosen::<C>(&english, "Nope"), None);
+    }
+
+    #[test]
+    fn answers_are_matched_to_their_choice() {
+        labels_find_their_choice::<BadServerChoice>();
+        labels_find_their_choice::<ConnectChoice>();
+        labels_find_their_choice::<OptionsChoice>();
+        labels_find_their_choice::<MenuChoice>();
+    }
+
+    fn labels<C: Choices>() -> Vec<Key> {
+        C::ALL.iter().map(|choice| choice.label()).collect()
     }
 
     // Otherwise pressing the second of two same-labelled buttons would run the first one's action.
     #[test]
-    fn menu_labels_differ_in_every_language() {
+    fn labels_differ_within_a_question_in_every_language() {
+        let questions = [
+            labels::<BadServerChoice>(),
+            labels::<ConnectChoice>(),
+            labels::<OptionsChoice>(),
+            labels::<MenuChoice>(),
+        ];
         for (tag, _) in strings::LOCALES {
             let language = Strings::new(tag);
-            let labels: BTreeSet<_> = MenuChoice::ALL
-                .into_iter()
-                .map(|choice| language.get(choice.key()))
-                .collect();
-            assert_eq!(labels.len(), MenuChoice::ALL.len(), "{tag}: {labels:?}");
+            for keys in &questions {
+                let labels: BTreeSet<_> = keys.iter().map(|&key| language.get(key)).collect();
+                assert_eq!(labels.len(), keys.len(), "{tag}: {labels:?}");
+            }
         }
     }
 
     #[test]
-    fn menu_answers_are_matched_in_the_language_shown() {
+    fn answers_are_matched_in_the_language_shown() {
         let locales = [
             (
                 "en",
@@ -135,9 +292,9 @@ mod tests {
             ("de", r#"{"menu": {"exit": "Beenden"}}"#),
         ];
         let german = Strings::with_locales("de-DE", &locales);
-        assert_eq!(menu_choice(&german, "Beenden"), Some(MenuChoice::Exit));
-        assert_eq!(menu_choice(&german, "Exit"), None);
+        assert_eq!(chosen(&german, "Beenden"), Some(MenuChoice::Exit));
+        assert_eq!(chosen::<MenuChoice>(&german, "Exit"), None);
         // Untranslated labels are shown, and matched, in English.
-        assert_eq!(menu_choice(&german, "Settings"), Some(MenuChoice::Settings));
+        assert_eq!(chosen(&german, "Settings"), Some(MenuChoice::Settings));
     }
 }

@@ -1,4 +1,23 @@
 {
+  "server": {
+    "query": "What's the address of your RomM server? It starts with http:// or https://, such as https://romm.example.com",
+    "change_query": "What's the new address of your RomM server? It's now {host}"
+  },
+  "bad_server": {
+    "query": "That isn't a server address RomM Sync can use. It starts with http:// or https:// and names the server, such as https://romm.example.com or http://192.168.1.5:8080.",
+    "try_again": "Try again",
+    "cancel": "Cancel"
+  },
+  "connect": {
+    "query": "RomM server: {host}",
+    "connect": "Connect",
+    "options": "Options"
+  },
+  "options": {
+    "query": "What would you like to change?",
+    "change_server": "Change server address",
+    "back": "Back"
+  },
   "menu": {
     "query": "What would you like to do?",
     "sync_now": "Sync now",
@@ -7,6 +26,18 @@
   },
   "log": {
     "sync_not_ready": "Syncing isn't available yet.",
-    "settings_not_ready": "Settings aren't available yet."
+    "settings_not_ready": "Settings aren't available yet.",
+    "not_a_pocket_card": "This doesn't look like a Pocket's SD card: a Pocket's card has Cores, Assets and Platforms folders. Choose the Pocket's card in Pocket Sync, then start RomM Sync again.",
+    "pocket_id_unreadable": "This Pocket's ID, in romm-sync/device.json on the card, can't be read. RomM Sync won't make a new one, because RomM would then see a different Pocket. Restore the file from a backup, or delete it to sync as a new Pocket.",
+    "pocket_id_mismatch": "This Pocket's ID file, romm-sync/device.json on the card, doesn't match the format RomM Sync expects, so the run has stopped. RomM Sync won't make a new ID, because RomM would then see a different Pocket. Restore the file from a backup, or delete it to sync as a new Pocket.",
+    "pocket_id_not_saved": "Couldn't save this Pocket's ID to the card.",
+    "server_file_unreadable": "romm-sync/server.json on the card can't be read, so the run has stopped. Fix the problem below, then start RomM Sync again. Deleting the file works too, but it loses the sign-in and collection saved in it.",
+    "bad_saved_host": "{host}, the address in romm-sync/server.json, isn't a server address RomM Sync can use.",
+    "server_file_not_saved": "Couldn't save the server address to romm-sync/server.json on the card.",
+    "connecting": "Connecting to {host}…",
+    "connected": "Connected to RomM {version}.",
+    "no_response": "No answer from {host}: {error}",
+    "not_romm": "{host} doesn't answer as a RomM server does (HTTP {status}). Check the address in Options.",
+    "romm_too_old": "RomM Sync needs RomM 5.4 or newer, and {host} has {version}."
   }
 }

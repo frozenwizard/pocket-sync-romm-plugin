@@ -1,6 +1,6 @@
 # Architecture: RomM Sync, a Pocket Sync plugin
 
-**Status:** draft, revised 2026-11-18 after a design review. Terms follow [GLOSSARY.md](../GLOSSARY.md). Decisions with lasting trade-offs are in [docs/adr/](adr/). [Open questions](#19-open-questions) lists what is still undecided.
+**Status:** draft, revised 2026-11-18 after a design review, and on 2026-11-23 to keep the server address and sign-in on the card, in `romm-sync/server.json`. Terms follow [GLOSSARY.md](../GLOSSARY.md). Decisions with lasting trade-offs are in [docs/adr/](adr/). [Open questions](#19-open-questions) lists what is still undecided.
 
 ## 1. Purpose
 
@@ -79,9 +79,10 @@ A plugin is Rust compiled to WebAssembly (`wasm32-wasip1`) with [Extism](https:/
 | User interface | `PluginMessage::Choice { name, query, choices }` (one button per choice), `Text { name, query }`, `Exit`; `print_msg` writes to a log | Menus, confirmations and conflict questions are buttons; progress is log lines; no game lists or box art |
 | Answers | `HostMessage::Answer { name, value }` or `Kill` | `Kill` only arrives while the plugin waits for an answer |
 | Stopping | Pocket Sync's Stop cancels the plugin at once, even mid-call (Extism cancel handle) | Every write must survive being cut off ([section 13](#13-safety-rules)) |
-| Files | Two folders, through WASI: `pocket/` is the card root, `host/` is a private folder on the computer | Card data in `pocket/romm-sync/`; address, sign-in, temp files and backups in `host/` |
+| Files | Two folders, through WASI: `pocket/` is the card root, `host/` is a private folder on the computer | Card data, including the server address and sign-in, in `pocket/romm-sync/`; temp files and backups in `host/` |
 | `host/` | `<Pocket Sync app data>/<owner>-<repo>/host`: created at install, kept across plugin updates, deleted at uninstall, never cleaned otherwise | The plugin cleans its own temp files. On Windows it's in the roaming profile, so no big permanent cache. |
 | Network | HTTP through Extism, only to hosts in `plugin.json`'s `allowed_hosts` (patterns matched against the host name, port excluded) | `"allowed_hosts": ["*"]`, since every user's RomM is at a different address |
+| Network failures | A request that gets no response (refused connection, unknown server, bad certificate, invalid URL, or a host not in `allowed_hosts`) ends the plugin's call: Extism returns the error from its host function, which traps, so the plugin can't catch it. No timeout is set, so a server that accepts the connection but never answers holds the call until Stop | The address must start with `http://` or `https://`; the plugin can't try one and fall back to the other. "Connecting to …" is logged before the first request, so the log names the server when a run ends this way. The first screen offers Options before connecting, so a bad address can be changed on the next run |
 | Response size | 50 MB per HTTP response (Extism's default; Pocket Sync doesn't change it) | Large files are downloaded in pieces with `Range` |
 | Other | `open_url` opens the browser; config key `locale` gives the system's language, even when Pocket Sync's "Always use English (US)" is ticked (`demo_host` doesn't set it); one thread; `std::thread::sleep` works; no time or memory limits set | Pairing opens RomM's approval page and polls; no WebSockets; no free-space query |
 | Install and update | The user adds the GitHub repo link; Pocket Sync fetches the latest release's `plugin.wasm` and `plugin.json` | Releases are the distribution channel ([section 17](#17-build-and-release)) |
@@ -119,29 +120,34 @@ What RomM already provides, so the plugin doesn't have to:
                                      │     host/ (computer)   pocket/ (card)│
                                      └──────────┼───────────────┼───────────┘
                                                 ▼               ▼
-                                   address, sign-in, temp     Assets/, Saves/,
-                                   downloads, save backups    romm-sync/ (ID, manifest)
+                                   temp downloads,            Assets/, Saves/,
+                                   save backups               romm-sync/ (ID, server, manifest)
 ```
 
-The card is the shared record: any computer that syncs the Pocket sees the same Pocket ID, RomM device ID, collection and manifest. Each computer keeps its own RomM address and sign-in for each Pocket, because two computers can reach the same server at different addresses, and a lost card must carry no working sign-in.
+The card is the whole record: any computer that syncs the Pocket sees the same Pocket ID, server address, sign-in, RomM device ID, collection and manifest, so a second computer needs no setup. The costs:
+- A computer that reaches the server at a different address (a LAN address at home, a VPN address elsewhere) has to change it, and the change applies to every computer.
+- A lost card carries a working sign-in until it's revoked in RomM ([section 15](#15-security-and-privacy)).
 
 ## 5. User flows
 
 ### 5.1 First run with a Pocket
 
 1. Pocket Sync is connected to the card; the user starts the plugin from the Plugins page.
-2. **Pocket ID:** if `romm-sync/device.json` is missing, create it with a new random ID.
-3. **Server:** if this computer has no RomM address for this Pocket, ask for it (`Text`), offering the last address used on this computer. Check `GET /api/heartbeat` answers and is 5.4 or newer.
-4. **Pair:** start pairing with the Pocket ID and the name "Analogue Pocket", open RomM's approval page (`open_url`), and poll until it's approved, denied or expired ([8.1](#81-pairing)). The approver can rename the device on that page. Save the token in `host/`. Check the granted permissions against the ones requested and say which features are off if any were left out.
-5. **Check the server:** if the card already has a RomM device ID and it differs from the one pairing returned, this is a different RomM server ([13](#13-safety-rules), rule 8).
-6. **Choose the Pocket collection:** offer **Use "Analogue Pocket"** (created if it doesn't exist) or the user's other regular collections as buttons. Smart and virtual collections are never listed. Save the choice on the card.
-7. Offer **Sync now**.
+2. **Check the card:** it must look like a Pocket card (`Cores/`, `Assets/`, `Platforms/`), or the run ends before anything is written.
+3. **Pocket ID:** if `romm-sync/device.json` is missing, create it with a new random ID. If it's there but can't be read, the run ends and the file is left alone: a new ID would make RomM see a different Pocket.
+4. **Server:** if the card has no `romm-sync/server.json`, ask for the address (`Text`) and save it there. It must start with `http://` or `https://` and name a server, with an optional port and path; the plugin checks this before saving, with the URL parser Extism uses, because Extism ends the call on an address it can't parse ([3.2](#32-the-plugin-host-pocket-sync), network failures). An answer that isn't an address, an empty one included, offers **Try again** and **Cancel**: on first setup Cancel ends the run, and when changing the address it goes back to Options. Then check `GET /api/heartbeat` answers and is 5.4 or newer.
+5. **Pair:** start pairing with the Pocket ID and the name "Analogue Pocket", open RomM's approval page (`open_url`), and poll until it's approved, denied or expired ([8.1](#81-pairing)). The approver can rename the device on that page. Save the token as `api_key` and RomM's device ID as `romm_device_id` in `server.json`. Check the granted permissions against the ones requested and say which features are off if any were left out.
+6. **Check the server:** if `server.json` already had a RomM device ID and it differs from the one pairing returned, the address now points at a different RomM server ([13](#13-safety-rules), rule 8).
+7. **Choose the Pocket collection:** offer **Use "Analogue Pocket"** (created if it doesn't exist) or the user's other regular collections as buttons. Smart and virtual collections are never listed. Save the choice as `collection` in `server.json`.
+8. Offer **Sync now**.
 
-The same Pocket on a second computer skips steps 2 and 6 (already on the card), asks for the address once (step 3) and pairs once (step 4). RomM gives back the same device.
+Once `server.json` exists, a run starts with **Connect**, **Options** and **Exit**. Connect runs the heartbeat check (step 4), pairs if there's no `api_key` (steps 5 and 6), asks for a collection if there's none (step 7), and shows the menu. Options is described in [5.5](#55-options-and-settings).
+
+The same Pocket on a second computer needs no setup: the card carries the address, sign-in and collection. If that computer reaches the server at a different address, the user changes it in Options, which changes it for every computer.
 
 ### 5.2 Sync now
 
-1. **Preflight:** check the card looks like a Pocket card (`Cores/`, `Assets/`, `Platforms/`); load the card's files and this computer's address and sign-in; check the server; delete leftover `.part` files in the plugin's folders; empty `host/tmp/`.
+1. **Preflight:** check the card looks like a Pocket card (`Cores/`, `Assets/`, `Platforms/`); load the card's files, including the address and sign-in in `server.json`; check the server; delete leftover `.part` files in the plugin's folders; empty `host/tmp/`.
 2. **(M6) Claim install requests** and add the playable games to the Pocket collection ([section 11](#11-install-on-device)).
 3. **Plan games:** fetch the Pocket collection's games with their files and compare them with the manifest, the card and the installed cores. This gives add, update, rename, adopt, remove, re-add and skip lists ([9.3](#93-planning)).
 4. **Saves:** sync the saves of games in the manifest, including games about to be removed. Ask about each save conflict ([5.4](#54-save-conflicts)). A game to be removed whose conflict is skipped stays on the card for now.
@@ -149,7 +155,7 @@ The same Pocket on a second computer skips steps 2 and 6 (already on the card), 
 6. **Transfer:** removals first (frees space), then renames, updates and additions, staged in `host/tmp/` ([9.4](#94-transfer-pipeline)).
 7. **Saves for new games:** run the save decisions ([10.3](#103-decisions)) for games added in this run, asking about any conflict as in step 4. A game re-added because its file went missing keeps its save record and was handled in step 4.
 8. **(M6) Report install requests:** `done`, `already_installed` or `failed` with a reason.
-9. **Finish:** write the manifest, empty `host/tmp/`, log a summary, and return to the menu.
+9. **Finish:** write the manifest, set `last_synced_at` in `device.json`, empty `host/tmp/`, log a summary, and return to the menu.
 
 ### 5.3 Removing games
 
@@ -169,12 +175,14 @@ RomM:    changed since the last sync, 2026-11-17 21:40
 
 Whichever copy isn't chosen is kept ([10.5](#105-conflicts-and-keeping-the-other-copy)). **Skip for now** leaves both untouched and asks again next sync. A deletion on either side, or RomM going back to an older version, counts as a change and is described in the question.
 
-### 5.5 Settings
+### 5.5 Options and Settings
 
-The menu's **Settings** offers:
+**Options**, on the first screen, works before connecting, so a run that ended on a bad address can still reach it:
+- **Change server address:** asks for the new address, saves it in `server.json` (keeping the rest of the file) and connects. Editing `server.json` by hand works too; the plugin reads it again each time it's needed.
+
+The menu's **Settings**, once connected, offers:
 - **Change collection:** pick another regular collection. The next sync plans the difference, with the usual confirmation before removals.
-- **Change server address** (this computer only).
-- **Sign out of this Pocket on this computer:** deletes the token from `host/`. RomM keeps the token valid until it's revoked in RomM's settings.
+- **Sign out of this Pocket:** deletes `api_key` from `server.json`, which signs the Pocket out on every computer. RomM keeps the token valid until it's revoked in RomM's settings.
 
 ## 6. Components
 
@@ -185,47 +193,59 @@ The plugin is one Rust crate with modules split along these lines. Logic that do
 | `lib` (entry) | `start` and `handle_response`; holds the run's state; turns errors into log lines and a menu; picks the language, fixed at `en-US` until Pocket Sync passes the one the user chose |
 | `flow` | The state machine: which phase runs next and which question to ask ([section 12](#12-control-flow)) |
 | `ui` | Building `Choice` and `Text` messages, naming questions, logging; every string looked up in the bundled `locales/<lang>/index.json` files (Pocket Sync's layout), each falling back from `de-AT` to `de` to English. Pocket Sync sends back the button's text as the answer, so answers are matched to the choice they stand for, never to English text |
+| `pocket_sync` | What the plugin uses of Pocket Sync (the log, HTTP; later `open_url`) behind a trait, so tests use a fake in place of Extism |
 | `romm::client` | HTTP over Extism: base URL, bearer token, JSON, error mapping (401, 403, 404, 409, 429), multipart bodies, `Range` downloads |
-| `romm::pairing` | Device pairing: init, open the approval page, poll, store the token |
+| `romm::pairing` | Device pairing: init, open the approval page, poll, return the token and device ID |
 | `romm::api` | Typed calls: heartbeat, devices, collections, games, files, saves, installs |
-| `card` | Checking the card, reading `core.json` and `data.json`, card paths, the plugin's card files |
+| `card` | Checking the card, reading `core.json` and `data.json`, card paths, the plugin's card files (`device.json`, `server.json`) |
 | `platforms` | RomM system ↔ Pocket platform ID mapping, checked against installed cores |
 | `manifest` | Loading, saving (safely, with `.bak`) and querying the record of what the plugin put on the card |
 | `plan` | Comparing the collection, manifest, card and cores into add / update / rename / adopt / remove / re-add / skip |
 | `transfer` | Staging downloads in `host/tmp/`, unzipping, verifying hashes, copying to the card, `.part` then rename |
 | `saves` | Decisions, upload, download, conflicts, backups |
 | `installs` | (M6) Claiming, adding to the collection, reporting outcomes |
-| `store` | The plugin's files in `host/`: addresses, tokens, backups, temp |
+| `store` | The plugin's files in `host/`: backups, temp |
 
 ## 7. Data and storage
 
 ### 7.1 On the card
 
-Everything lives in one folder at the card root, `romm-sync/`. Nothing on the card is secret.
+Everything lives in one folder at the card root, `romm-sync/`. The only secret is the sign-in in `server.json` ([section 15](#15-security-and-privacy)).
 
-**`romm-sync/device.json`**: the Pocket's identity, written once.
+Every file has a `schema` number, so a later plugin can tell an older file. `device.json` and `server.json` are written to `<name>.part` and renamed into place, so a card pulled out mid-write never holds half a file under the real name. The manifest has its own procedure, below.
+
+**`romm-sync/device.json`**: the Pocket's identity, written once, and when it last finished a sync.
 
 ```json
 {
   "schema": 1,
   "pocket_id": "6f1c5d0e-2b7a-4c1e-9a3d-0e5f8b2c4d71",
-  "created_at": "2026-11-18T09:00:00Z"
+  "last_synced_at": "2026-11-18T09:00:00Z"
 }
 ```
 
-`pocket_id` is a random UUID. It's sent as RomM's `client_device_identifier`, so every computer that pairs this Pocket with the same server gets the same RomM device. Its first 8 hex digits name the Pocket slot ([10.1](#101-where-saves-live)).
+- `pocket_id` is a random UUID. It's sent as RomM's `client_device_identifier`, so pairing this Pocket again with the same server gets the same RomM device. Its first 8 hex digits name the Pocket slot ([10.1](#101-where-saves-live)). It must parse as a UUID, so a card edited by hand can't put a path into the file names it's used for.
+- `last_synced_at` is `null` until the first sync finishes.
+- Only `pocket_id` is required. Fields from a newer plugin are kept when this one writes the file.
+- A `device.json` that can't be read, or doesn't match its format, is left alone and the run stops, because a new ID would make RomM see a different Pocket. The user restores it, or deletes it to sync as a new Pocket.
 
-**`romm-sync/config.json`**: what this Pocket syncs.
+**`romm-sync/server.json`**: the RomM server this Pocket syncs with, its sign-in, and what it syncs.
 
 ```json
 {
   "schema": 1,
+  "host": "https://romm.example.com",
+  "api_key": "rmm_…",
   "romm_device_id": "c1a2…",
   "collection": { "id": 12, "name": "Analogue Pocket" }
 }
 ```
 
-`romm_device_id` says which RomM server the manifest's IDs belong to: pairing with a different server gives a different device ID ([13](#13-safety-rules), rule 8). The server's address isn't here; each computer keeps its own.
+- `host` is the server's address, starting with `http://` or `https://`, possibly with a sub-path (`https://example.com/romm`). It's the only field required, so the file can be written by hand with just `{"host": "…"}`; the plugin fills in the rest.
+- `api_key` is the client token from pairing. `romm_device_id` is RomM's ID for this Pocket's device, returned by pairing. It says which RomM server the manifest's IDs belong to: pairing with a different server gives a different device ID ([13](#13-safety-rules), rule 8).
+- `collection` is the Pocket collection.
+- Changing the address (in Options, or by hand) keeps every other field, including fields the plugin doesn't know. The plugin reads the file again each time it needs it, so edits made while it waits are used.
+- A `server.json` with no address in `host` (missing, empty or not text) asks for the address, and entering one keeps the file's other fields. One that can't be read stops the run, wherever it's read, and is left alone, since it may hold the sign-in.
 
 **`romm-sync/manifest.json`**: every file the plugin put on the card, and the last-synced state of each save.
 
@@ -271,18 +291,18 @@ Everything lives in one folder at the card root, `romm-sync/`. Nothing on the ca
 
 ### 7.2 On the computer (`host/`)
 
+Nothing in `host/` is needed to sync. It holds working files and backups only.
+
 | Path | Holds | Notes |
 |---|---|---|
-| `host/config/pockets/<pocket_id>.json` | This computer's RomM address for that Pocket, its token, RomM device ID, granted permissions, expiry | Never copied to the card |
-| `host/config/last_server.json` | The last address used, offered for the next new Pocket | No secrets |
 | `host/tmp/` | Downloads in progress, unzipped files, staged saves | Emptied at the start and end of every run |
 | `host/backups/saves/<pocket_id>/<platform>/<game>/<timestamp>.sav` | Every save the plugin replaced or lost in a conflict on the card | Newest 10 per game kept |
 | `host/log/` | A copy of the last few runs' logs (optional) | For bug reports; no tokens in logs |
 
 ### 7.3 Rules
 
-- Tokens never go on the card, so a lost card carries no working sign-in.
-- The card holds everything another computer needs to carry on syncing, except the address and the sign-in.
+- The card holds everything any computer needs to carry on syncing, the address and the sign-in included.
+- The sign-in is on the card, so a lost card carries a working sign-in until it's revoked in RomM ([section 15](#15-security-and-privacy)).
 - The plugin only ever replaces, renames or deletes managed files: card files in the manifest that still match its recorded size and hash.
 
 ## 8. RomM API used
@@ -510,13 +530,16 @@ Pocket Sync calls `start()` once, then `handle_response()` with each answer, and
 - The run's state (phase, plan, pending conflict list, claimed requests) lives in the plugin's memory between calls, held by `lib`. Pocket Sync keeps one instance per run, and Extism resets an instance's memory only after a call to `_start`, which a Rust `cdylib` doesn't export (it exports `_initialize`). Each run gets a new instance, so nothing carries over from the last run. `lib` also drops the state when the plugin returns `Exit`, and an answer that arrives with no run is an error, not a new run.
 - Long phases (planning, transfer) run inside one call and report progress through `print_msg`.
 - A phase that needs answers (confirmation, conflicts) returns a question and continues in the next `handle_response`.
-- Questions are named after their phase and subject (`confirm-plan`, `save-conflict:1234`), so a stale or unexpected answer is recognised and ignored.
+- Questions are named after their phase and subject (`confirm-plan`, `save-conflict:1234`), so a stale or unexpected answer is recognised and ignored. The run remembers the question waiting; an answer to another question, or one that matches none of its buttons, gets the same question again.
 
 ```
-start ──► Preflight ──► [no address] ──Text──► Pair ──► [no collection] ──Choice──► Menu
+start ──► Check card, Pocket ID ──► [no server.json] ──Text──► Connect
+                                └─► [server.json] ──Choice──► Connect / Options / Exit
+Options ──► Change server address ──Text──► Connect
+Connect ──► Heartbeat ──► [no api_key] Pair ──► [no collection] ──Choice──► Menu
 Menu ──Sync now──► (M6 Claim) ──► Plan ──► Saves ──Choice per conflict──► Confirm ──Choice──►
        Transfer ──► New-game saves ──► (M6 Report) ──► Finish ──► Menu
-Menu ──Settings──► change collection / server address / sign out of this Pocket
+Menu ──Settings──► change collection / sign out of this Pocket
 Menu ──Exit──► Exit
 ```
 
@@ -531,8 +554,8 @@ Menu ──Exit──► Exit
 5. **Ask before deleting games,** and say how many and which.
 6. **Saves are never lost.** The copy not chosen in a conflict is kept ([10.5](#105-conflicts-and-keeping-the-other-copy)), every card save the plugin replaces or deletes is backed up in `host/backups/`, and saves of removed games stay on the card.
 7. **Card full:** stop the transfer, delete the current `.part`, write the manifest, and say how much was left. (M6) Waiting install requests stay unreported.
-8. **Wrong server:** if the card's `romm_device_id` doesn't match the device this computer's sign-in belongs to, don't sync until the user confirms. Confirming starts fresh with this server: the manifest's game records are cleared (the files become unmanaged and are never deleted), and matching files are adopted again on the next plan.
-9. **Tokens stay on the computer,** and never appear in logs.
+8. **Wrong server:** if pairing returns a RomM device ID different from the one in `server.json`, or the manifest's `romm_device_id` differs from `server.json`'s, the address now points at a different RomM server. Don't sync until the user confirms. Confirming starts fresh with this server: `collection` is cleared, the manifest's game records are cleared (the files become unmanaged and are never deleted), and matching files are adopted again on the next plan.
+9. **Tokens never appear in logs.** An error about one of the plugin's files says where the problem is (line, column and field) and never quotes the file.
 
 ## 14. Performance
 
@@ -545,7 +568,8 @@ Menu ──Exit──► Exit
 ## 15. Security and privacy
 
 - `allowed_hosts: ["*"]` lets the plugin reach any web address. Pocket Sync doesn't show this to users, so the README says so plainly, and the plugin only ever contacts the RomM address the user entered.
-- The token is bound to the Pocket's RomM device. Revoking that device's token in RomM's settings cuts the Pocket off on that computer.
+- **The sign-in is on the card,** as `api_key` in `server.json`. Anyone holding the card can use it, with the permissions granted at pairing (games, collections, saves and the device), until it's revoked in RomM. That's the price of a card that syncs from any computer with no setup. The README tells users to revoke a lost card's token.
+- The token is bound to the Pocket's RomM device. Revoking that device's token in RomM's settings cuts the Pocket off on every computer.
 - Each pairing adds a token, and earlier ones stay valid until revoked in RomM (a RomM limitation).
 - Nothing personal goes into the repo: no addresses, user names or real tokens in code, tests or fixtures.
 
@@ -572,7 +596,9 @@ Cases worth a test each:
 - a save deleted in RomM, with and without changes on the Pocket;
 - RomM's newest save version deleted, so RomM goes back to an older one;
 - a run cut off right after a save upload;
-- the same Pocket on two computers with different server addresses;
+- the server address changed in Options and by hand, keeping the rest of `server.json`;
+- a `server.json` written by hand with only `host`, and one that can't be read;
+- an address that refuses the connection: the run ends, and Options is still reachable on the next run;
 - two Pockets on one computer;
 - the same card paired with a different RomM server.
 
@@ -594,7 +620,7 @@ Cases worth a test each:
 - **Release:**
   - A GitHub release with `plugin.wasm` and `plugin.json` attached.
   - Pocket Sync installs and updates from the latest release, and records its tag as the version.
-  - The plugin's ID in Pocket Sync is `<owner>-pocket-sync-romm-plugin`, which also names its `host/` folder. Renaming the repo makes it a different plugin and strands every user's sign-ins, so the name is fixed.
+  - The plugin's ID in Pocket Sync is `<owner>-pocket-sync-romm-plugin`, which also names its `host/` folder. Renaming the repo makes it a different plugin and strands every user's save backups in `host/`, so the name is fixed.
 - **CI (later):**
   - format, Clippy and unit tests;
   - the `wasm32-wasip1` build;
@@ -608,7 +634,7 @@ Each milestone is small, tested commits, with its tests passing before the next 
 | # | Milestone | Done when |
 |---|---|---|
 | M0 | Skeleton | The plugin builds for `wasm32-wasip1`, runs in `demo_host`, shows a menu, logs, and keeps state between calls. Its text comes from bundled locale files with English as the fallback (the language is fixed at `en-US` for now), and answers are matched to the choice they stand for, not to English text |
-| M1 | Server and pairing | Pocket ID, address prompt (per computer), heartbeat check, pairing with polling, token in `host/`, permission check, wrong-server check |
+| M1 | Server and pairing | Pocket ID, server address in `server.json` with Connect and Options, heartbeat check, pairing with polling, token in `server.json`, permission check, wrong-server check |
 | M2 | Games: add | Choose or create the Pocket collection; plan and copy GB, GBC and GBA games; manifest; staging; `.part` then rename |
 | M3 | Games: update, rename, remove, adopt | Hash-based updates, renames, confirmed removals, adopting existing files, recovery after a cut-off run, `Range` downloads |
 | M4 | Saves | Pocket slot, decisions, conflicts, backups, final sync for removed games |

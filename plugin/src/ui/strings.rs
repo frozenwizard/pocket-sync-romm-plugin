@@ -15,39 +15,60 @@ pub(super) const LOCALES: &[(&str, &str)] = &[(
     )),
 )];
 
-/// A string the user sees.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Key {
-    MenuQuery,
-    SyncNow,
-    Settings,
-    Exit,
-    SyncNotReady,
-    SettingsNotReady,
+/// Declares `Key`, one variant per string, with its path in the locale files. One table keeps the
+/// variants, their paths and the test list of every key from drifting apart.
+macro_rules! keys {
+    ($($key:ident => $path:literal,)*) => {
+        /// A string the user sees.
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        pub enum Key {
+            $($key,)*
+        }
+
+        impl Key {
+            #[cfg(test)]
+            const ALL: &'static [Key] = &[$(Key::$key,)*];
+
+            /// Its path in the locale files.
+            fn path(self) -> &'static str {
+                match self {
+                    $(Key::$key => $path,)*
+                }
+            }
+        }
+    };
 }
 
-impl Key {
-    #[cfg(test)]
-    const ALL: [Key; 6] = [
-        Key::MenuQuery,
-        Key::SyncNow,
-        Key::Settings,
-        Key::Exit,
-        Key::SyncNotReady,
-        Key::SettingsNotReady,
-    ];
-
-    /// Its path in the locale files.
-    fn path(self) -> &'static str {
-        match self {
-            Key::MenuQuery => "menu.query",
-            Key::SyncNow => "menu.sync_now",
-            Key::Settings => "menu.settings",
-            Key::Exit => "menu.exit",
-            Key::SyncNotReady => "log.sync_not_ready",
-            Key::SettingsNotReady => "log.settings_not_ready",
-        }
-    }
+keys! {
+    ServerQuery => "server.query",
+    ChangeServerQuery => "server.change_query",
+    BadHost => "bad_server.query",
+    TryAgain => "bad_server.try_again",
+    Cancel => "bad_server.cancel",
+    ConnectQuery => "connect.query",
+    Connect => "connect.connect",
+    Options => "connect.options",
+    OptionsQuery => "options.query",
+    ChangeServer => "options.change_server",
+    Back => "options.back",
+    MenuQuery => "menu.query",
+    SyncNow => "menu.sync_now",
+    Settings => "menu.settings",
+    Exit => "menu.exit",
+    SyncNotReady => "log.sync_not_ready",
+    SettingsNotReady => "log.settings_not_ready",
+    NotAPocketCard => "log.not_a_pocket_card",
+    PocketIdUnreadable => "log.pocket_id_unreadable",
+    PocketIdMismatch => "log.pocket_id_mismatch",
+    PocketIdNotSaved => "log.pocket_id_not_saved",
+    ServerFileUnreadable => "log.server_file_unreadable",
+    ServerFileNotSaved => "log.server_file_not_saved",
+    BadSavedHost => "log.bad_saved_host",
+    Connecting => "log.connecting",
+    Connected => "log.connected",
+    NoResponse => "log.no_response",
+    NotRomm => "log.not_romm",
+    RommTooOld => "log.romm_too_old",
 }
 
 /// The strings for one language.
@@ -79,6 +100,15 @@ impl Strings {
         self.0
             .get(key.path())
             .unwrap_or_else(|| panic!("English has no {}", key.path()))
+    }
+
+    /// The string for `key`, with each `{name}` in it replaced by its value in `values`.
+    pub fn fill(&self, key: Key, values: &[(&str, &str)]) -> String {
+        let mut string = self.get(key).to_string();
+        for (name, value) in values {
+            string = string.replace(&format!("{{{name}}}"), value);
+        }
+        string
     }
 }
 
@@ -151,6 +181,20 @@ mod tests {
     fn empty_strings_fall_back_to_english() {
         let locales = [("en", r#"{"a": "Exit"}"#), ("de", r#"{"a": ""}"#)];
         assert_eq!(Strings::with_locales("de", &locales).0["a"], "Exit");
+    }
+
+    #[test]
+    fn placeholders_are_filled_in() {
+        let english = Strings::new("en");
+        let line = english.fill(
+            Key::RommTooOld,
+            &[("host", "https://romm.example.com"), ("version", "5.3.2")],
+        );
+        assert!(
+            line.contains("https://romm.example.com") && line.contains("5.3.2"),
+            "{line}"
+        );
+        assert!(!line.contains('{'), "{line}");
     }
 
     // Every language falls back to English, so this is what keeps `get` from panicking.
