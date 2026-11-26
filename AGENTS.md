@@ -11,7 +11,7 @@ RomM Sync is a Pocket Sync plugin: Rust built for `wasm32-wasip1` with Extism, s
 
 ## Gotchas
 
-- **Extism traps on network failure.** A request that gets no response (refused connection, unknown server, bad certificate, invalid URL, host not in `allowed_hosts`) ends the plugin's call, and the plugin can't catch it. Check an address with `romm::base_url` before requesting it, and log the server you're contacting first, so the log names it when a run ends this way.
+- **Extism traps on network failure.** A request that gets no response (refused connection, unknown server, bad certificate, invalid URL, host not in `allowed_hosts`) ends the plugin's call, and the plugin can't catch it. So does `open_url` when the browser can't be opened. RomM calls take a `BaseUrl`, which only `romm::base_url` makes, so an address is checked before it's requested. Log what you're about to do first (the server you're contacting, the link you're opening), so the log says it when a run ends this way.
 - **Extism memory is freed by hand.** Extism's `Memory` isn't freed on drop: copy a response's body out and free it, as `Extism::get` in `lib.rs` does.
 - **Every write survives being cut off.** Pocket Sync's Stop ends the plugin mid-call, and people pull the card out mid-write. Write card files through `Card`'s helpers, which write `<name>.part` and rename it into place.
 - **`server.json` is edited by hand.** Read it as plain JSON and write back every field you don't know.

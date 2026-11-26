@@ -38,6 +38,20 @@
     "connected": "Connected to RomM {version}.",
     "no_response": "No answer from {host}: {error}",
     "not_romm": "{host} doesn't answer as a RomM server does (HTTP {status}). Check the address in Options.",
-    "romm_too_old": "RomM Sync needs RomM 5.4 or newer, and {host} has {version}."
+    "romm_too_old": "RomM Sync needs RomM 5.4 or newer, and {host} has {version}.",
+    "unexpected_answer": "{host} gave an answer RomM Sync didn't expect (HTTP {status}).",
+    "signed_in": "Signed in.",
+    "sign_in_rejected": "RomM didn't accept the sign-in saved in romm-sync/server.json, so this Pocket will pair with RomM again.",
+    "pairing": "Approve this Pocket in RomM, on the page opening in your browser. The code is {code}.",
+    "pairing_link": "If the page doesn't open, paste this link into your browser: {url}",
+    "pairing_denied": "Pairing was denied in RomM.",
+    "pairing_expired": "The code {code} expired before it was approved.",
+    "pairing_busy": "RomM has had too many pairing attempts from this computer. Wait a minute, then connect again.",
+    "paired": "This Pocket is paired with RomM.",
+    "sign_in_not_saved": "Couldn't save the sign-in to romm-sync/server.json on the card.",
+    "permissions_missing": "RomM didn't allow everything RomM Sync asked for. Missing: {permissions}.",
+    "games_off": "Syncing games is off: it needs {permissions}.",
+    "collection_off": "Creating the Analogue Pocket collection is off: it needs {permissions}.",
+    "saves_off": "Syncing saves is off: it needs {permissions}."
   }
 }

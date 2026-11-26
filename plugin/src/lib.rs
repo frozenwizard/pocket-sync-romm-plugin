@@ -5,11 +5,12 @@ mod romm;
 mod ui;
 
 use std::cell::RefCell;
+use std::time::Duration;
 
 use card::Card;
 use extism_pdk::*;
 use flow::Run;
-use pocket_sync::{PocketSync, Response};
+use pocket_sync::{PocketSync, Request, Response};
 use ui::{HostMessage, PluginMessage};
 
 /// The card's root, as Pocket Sync gives it to the plugin.
@@ -22,6 +23,7 @@ const LOCALE: &str = "en-US";
 
 #[host_fn]
 unsafe extern "ExtismHost" {
+    fn open_url(url: &str) -> ();
     fn print_msg(message: &str) -> ();
 }
 
@@ -37,16 +39,41 @@ impl PocketSync for Extism {
         }
     }
 
-    fn get(&mut self, url: &str) -> Result<Response, String> {
-        let response =
-            http::request::<()>(&HttpRequest::new(url), None).map_err(|error| error.to_string())?;
+    fn send(&mut self, request: &Request) -> Result<Response, String> {
+        let mut http_request = HttpRequest::new(&request.url).with_method(request.method);
+        for (name, value) in &request.headers {
+            http_request = http_request.with_header(*name, value);
+        }
+        // Extism doesn't free memory when it's dropped, so the request body and the response are
+        // freed here. Otherwise each stays in memory until the call ends, which matters while
+        // pairing polls for minutes. extism-pdk's own copy of the URL and headers isn't freed, but
+        // that's a few hundred bytes a request.
+        let body = (request.body.as_ref())
+            .map(Memory::from_bytes)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let response = http::request(&http_request, body.as_ref());
+        if let Some(body) = body {
+            body.free();
+        }
+        let response = response.map_err(|error| error.to_string())?;
         let status = response.status_code();
-        // Extism doesn't free the body's memory when the response is dropped, so it's copied out
-        // and freed here. Otherwise every response stays in memory until the call ends.
         let memory = response.into_memory();
         let body = memory.to_vec();
         memory.free();
         Ok(Response { status, body })
+    }
+
+    /// Ignores errors, as `log` does. That doesn't cover Pocket Sync failing to open the browser,
+    /// which ends the call.
+    fn open_url(&mut self, url: &str) {
+        unsafe {
+            let _ = open_url(url);
+        }
+    }
+
+    fn wait(&mut self, duration: Duration) {
+        std::thread::sleep(duration);
     }
 }
 
@@ -59,11 +86,9 @@ thread_local! {
 
 #[plugin_fn]
 pub fn start() -> FnResult<PluginMessage> {
-    let mut run = Run::new(LOCALE, Card::new(POCKET));
-    let question = flow::start(&mut run, &mut Extism);
-    // As in `continue_run`, a run that has ended isn't kept, and neither is an earlier one.
-    let ended = matches!(question, PluginMessage::Exit);
-    RUN.set(if ended { None } else { Some(run) });
+    let (run, question) = flow::start(LOCALE, Card::new(POCKET), &mut Extism);
+    // Replaces any earlier run.
+    RUN.set(run);
     Ok(question)
 }
 
@@ -99,9 +124,8 @@ mod tests {
 
     /// A run on a new Pocket card, waiting for the server's address.
     fn started(root: &tempfile::TempDir) -> Option<Run> {
-        let mut run = Run::new("en-US", Card::new(root.path()));
-        flow::start(&mut run, &mut FakePocketSync::default());
-        Some(run)
+        let card = Card::new(root.path());
+        flow::start("en-US", card, &mut FakePocketSync::default()).0
     }
 
     #[test]
