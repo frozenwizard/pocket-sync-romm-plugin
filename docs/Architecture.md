@@ -586,7 +586,7 @@ Menu ──Exit──► Exit
 | Level | What | How |
 |---|---|---|
 | Unit | Mapping, choosing files, planning (including adopt, rename and hold), manifest load/save/recovery, save decisions, parsing RomM replies | `cargo test` on the normal host target; the logic modules don't depend on Extism |
-| Plugin | The whole flow against a fake card and a fake RomM | pocket-plugin's `demo_host` runs `plugin.wasm` from the terminal with a folder as the card |
+| Plugin | The whole flow against a fake card and a fake RomM | pocket-plugin's `demo_host` runs `plugin.wasm` from the terminal, or Pocket Sync runs it, with `test-pocket/` as the card ([running-locally.md](running-locally.md)) |
 | Fake RomM | Pairing (pending, slow down, denied, expired, approved), heartbeat, collections, the game list with `collection_id` and `with_files`, file downloads with `Range`, saves with slots and `409`, (M6) install requests | A small fake server in `tools/`, started from the one used for Rommarch, which already does pairing, collections, games and saves |
 | Fake card | Several `Cores/*/core.json` and `data.json` samples, `Assets/`, `Saves/` | Fixtures in `tests/fixtures/card/` |
 | Real | A real Pocket and a real RomM 5.4 server | By hand before each release, in Pocket Sync on macOS, Windows and Linux |
