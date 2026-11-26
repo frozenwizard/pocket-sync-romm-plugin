@@ -50,7 +50,9 @@ keys! {
     Options => "connect.options",
     OptionsQuery => "options.query",
     ChangeServer => "options.change_server",
+    Unpair => "options.unpair",
     Back => "options.back",
+    UnpairQuery => "unpair.query",
     MenuQuery => "menu.query",
     SyncNow => "menu.sync_now",
     Settings => "menu.settings",
@@ -83,6 +85,13 @@ keys! {
     GamesOff => "log.games_off",
     CollectionOff => "log.collection_off",
     SavesOff => "log.saves_off",
+    NotPaired => "log.not_paired",
+    Unpairing => "log.unpairing",
+    Unpaired => "log.unpaired",
+    UnpairRejected => "log.unpair_rejected",
+    UnpairNotAllowed => "log.unpair_not_allowed",
+    UnpairNoDevice => "log.unpair_no_device",
+    ServerFileNotDeleted => "log.server_file_not_deleted",
 }
 
 /// The strings for one language.

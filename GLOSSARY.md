@@ -14,6 +14,24 @@ _Avoid_: card, SD card (as something separate from the Pocket)
 A machine running Pocket Sync with the Pocket's card attached. Any computer can sync the Pocket with no setup, because the RomM address and sign-in are on the card.
 _Avoid_: host, desktop
 
+### Pairing
+
+**Pairing**:
+Linking a Pocket to one user on one RomM server: a RomM user approves the Pocket on RomM's web page, and RomM gives back the Pocket's device and a sign-in for it. Pairing again with the same server and user gets the same device, while it exists, and a new sign-in.
+_Avoid_: login, registration, linking
+
+**Device**:
+RomM's record of one Pocket for one RomM user, made when the Pocket pairs. Its ID is `romm_device_id` in `server.json`, and RomM picks it.
+_Avoid_: client, registration
+
+**Sign-in**:
+What pairing gives the Pocket: a token, saved as `api_key` in `server.json`, that acts as the approving user, with the permissions they granted, on the Pocket's device only. It ends when it expires, is revoked, or its device is deleted.
+_Avoid_: login, credentials, session
+
+**Unpair**:
+Undoing pairing: deleting the Pocket's device in RomM, which ends its sign-in, then removing the games RomM Sync put on the Pocket and deleting `server.json`. The Pocket keeps its ID and its saves.
+_Avoid_: sign out, reset, forget
+
 ### What goes on the Pocket
 
 **Game**:

@@ -16,7 +16,11 @@
   "options": {
     "query": "What would you like to change?",
     "change_server": "Change server address",
+    "unpair": "Unpair",
     "back": "Back"
+  },
+  "unpair": {
+    "query": "Unpair this Pocket from RomM? Its device is deleted in RomM, and the RomM address and sign-in are deleted from the Pocket. The Pocket keeps its ID and its saves."
   },
   "menu": {
     "query": "What would you like to do?",
@@ -52,6 +56,13 @@
     "permissions_missing": "RomM didn't allow everything RomM Sync asked for. Missing: {permissions}.",
     "games_off": "Syncing games is off: it needs {permissions}.",
     "collection_off": "Creating the Analogue Pocket collection is off: it needs {permissions}.",
-    "saves_off": "Syncing saves is off: it needs {permissions}."
+    "saves_off": "Syncing saves is off: it needs {permissions}.",
+    "not_paired": "This Pocket isn't paired: romm-sync/server.json has no address or no sign-in.",
+    "unpairing": "Deleting this Pocket's device in RomM…",
+    "unpaired": "This Pocket is unpaired. Its device is deleted in RomM, and the RomM address and sign-in are deleted from the Pocket.",
+    "unpair_rejected": "RomM didn't accept this Pocket's sign-in, so the Pocket can't be unpaired. Nothing has changed on the Pocket. Check the server address. If the sign-in expired, connect to pair again, then unpair. If this Pocket's device was already deleted in RomM, delete romm-sync/server.json on the card.",
+    "unpair_not_allowed": "RomM didn't let this Pocket delete its device: that needs {permissions}, which pairing didn't grant. Nothing has changed on the Pocket. Delete this Pocket's device in RomM, then delete romm-sync/server.json on the card.",
+    "unpair_no_device": "RomM has no device with the ID in romm-sync/server.json for this sign-in, so the Pocket can't be unpaired. Nothing has changed on the Pocket. Delete this Pocket's device in RomM, then delete romm-sync/server.json on the card.",
+    "server_file_not_deleted": "This Pocket's device is deleted in RomM, but romm-sync/server.json couldn't be deleted from the card. Delete it by hand."
   }
 }
