@@ -48,6 +48,7 @@ pub const SERVER: &str = "server";
 pub const BAD_SERVER: &str = "bad-server";
 pub const CONNECT: &str = "connect";
 pub const OPTIONS: &str = "options";
+pub const UNPAIR: &str = "unpair";
 pub const MENU: &str = "menu";
 
 /// The buttons of a `Choice` question.
@@ -150,15 +151,21 @@ pub fn connect(strings: &Strings, host: &str) -> PluginMessage {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OptionsChoice {
     ChangeServer,
+    Unpair,
     Back,
 }
 
 impl Choices for OptionsChoice {
-    const ALL: &'static [Self] = &[OptionsChoice::ChangeServer, OptionsChoice::Back];
+    const ALL: &'static [Self] = &[
+        OptionsChoice::ChangeServer,
+        OptionsChoice::Unpair,
+        OptionsChoice::Back,
+    ];
 
     fn label(self) -> Key {
         match self {
             OptionsChoice::ChangeServer => Key::ChangeServer,
+            OptionsChoice::Unpair => Key::Unpair,
             OptionsChoice::Back => Key::Back,
         }
     }
@@ -166,6 +173,29 @@ impl Choices for OptionsChoice {
 
 pub fn options(strings: &Strings) -> PluginMessage {
     choice::<OptionsChoice>(strings, OPTIONS, strings.get(Key::OptionsQuery).into())
+}
+
+/// A button on the question asked before unpairing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum UnpairChoice {
+    Unpair,
+    Cancel,
+}
+
+impl Choices for UnpairChoice {
+    const ALL: &'static [Self] = &[UnpairChoice::Unpair, UnpairChoice::Cancel];
+
+    fn label(self) -> Key {
+        match self {
+            UnpairChoice::Unpair => Key::Unpair,
+            UnpairChoice::Cancel => Key::Cancel,
+        }
+    }
+}
+
+/// Asks before unpairing the Pocket, saying what it removes.
+pub fn unpair(strings: &Strings) -> PluginMessage {
+    choice::<UnpairChoice>(strings, UNPAIR, strings.get(Key::UnpairQuery).into())
 }
 
 /// A button on the menu.
@@ -257,6 +287,7 @@ mod tests {
         labels_find_their_choice::<BadServerChoice>();
         labels_find_their_choice::<ConnectChoice>();
         labels_find_their_choice::<OptionsChoice>();
+        labels_find_their_choice::<UnpairChoice>();
         labels_find_their_choice::<MenuChoice>();
     }
 
@@ -271,6 +302,7 @@ mod tests {
             labels::<BadServerChoice>(),
             labels::<ConnectChoice>(),
             labels::<OptionsChoice>(),
+            labels::<UnpairChoice>(),
             labels::<MenuChoice>(),
         ];
         for (tag, _) in strings::LOCALES {

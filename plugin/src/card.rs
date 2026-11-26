@@ -191,6 +191,15 @@ impl Card {
         })
     }
 
+    /// Deletes `romm-sync/server.json`, the RomM address and sign-in, leaving the Pocket's ID. A
+    /// missing file counts as deleted. The error says why it can't be deleted.
+    pub fn delete_server_file(&self) -> Result<(), String> {
+        match fs::remove_file(self.path(SERVER_FILE)) {
+            Err(error) if error.kind() != ErrorKind::NotFound => Err(error.to_string()),
+            _ => Ok(()),
+        }
+    }
+
     /// Reads `romm-sync/server.json` as plain JSON, applies `change`, and writes it back. A missing
     /// file starts empty. The error says why the file can't be read or written.
     fn change_server_file(
@@ -569,6 +578,27 @@ mod tests {
             fs::write(server_file(&root), file.to_string()).unwrap();
             assert_eq!(card.sign_in(), Ok(None), "{file}");
         }
+    }
+
+    #[test]
+    fn deleting_server_json_keeps_the_pocket_id() {
+        let root = test_card();
+        let card = Card::new(root.path());
+        let id = card.pocket_id().unwrap();
+        card.save_sign_in(&test_sign_in("rmm_k")).unwrap();
+        card.delete_server_file().unwrap();
+        assert!(!server_file(&root).exists());
+        assert_eq!(card.pocket_id().unwrap(), id);
+        // Already gone.
+        assert_eq!(card.delete_server_file(), Ok(()));
+    }
+
+    #[test]
+    fn a_server_json_that_cant_be_deleted_is_reported() {
+        let root = test_card();
+        // A folder can't be deleted as a file.
+        fs::create_dir_all(server_file(&root)).unwrap();
+        assert!(Card::new(root.path()).delete_server_file().is_err());
     }
 
     // A value in the file could be a token, and errors go to the log.

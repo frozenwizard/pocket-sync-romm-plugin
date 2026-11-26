@@ -103,6 +103,25 @@ pub enum SignInCheck {
     Rejected,
 }
 
+/// Why RomM didn't delete the Pocket's device.
+#[derive(Debug, PartialEq)]
+pub enum DeleteDeviceError {
+    /// RomM doesn't accept the token (revoked, expired, from another server, or its device already
+    /// deleted), so it can't say whether the device is there.
+    Rejected,
+    /// The token works, but pairing didn't grant `devices.write`.
+    NotAllowed,
+    /// The token works, but the device ID isn't its device.
+    NoDevice,
+    Request(RequestError),
+}
+
+impl From<RequestError> for DeleteDeviceError {
+    fn from(error: RequestError) -> Self {
+        DeleteDeviceError::Request(error)
+    }
+}
+
 /// `GET /api/heartbeat`, keeping only what the plugin reads.
 #[derive(Deserialize)]
 struct Heartbeat {
@@ -194,6 +213,26 @@ pub fn check_sign_in(
         // RomM hides another device's ID from a token bound to one device as a 404.
         401 | 404 => Ok(SignInCheck::Rejected),
         status => Err(RequestError::Unexpected(status)),
+    }
+}
+
+/// Deletes the Pocket's device in RomM with `sign_in`. RomM deletes the device's tokens with it, so
+/// `sign_in` stops working too.
+pub fn delete_device(
+    pocket_sync: &mut impl PocketSync,
+    base: &BaseUrl,
+    sign_in: &SignIn,
+) -> Result<(), DeleteDeviceError> {
+    let request =
+        Request::delete(base.api(&["devices", sign_in.device_id()])).with_bearer(sign_in.api_key());
+    let response = send(pocket_sync, &request)?;
+    match response.status {
+        // RomM answers 204.
+        200..=299 => Ok(()),
+        401 => Err(DeleteDeviceError::Rejected),
+        403 => Err(DeleteDeviceError::NotAllowed),
+        404 => Err(DeleteDeviceError::NoDevice),
+        status => Err(RequestError::Unexpected(status).into()),
     }
 }
 
@@ -404,6 +443,43 @@ mod tests {
         assert_eq!(check(401, "{}"), Ok(SignInCheck::Rejected));
         assert_eq!(check(404, "{}"), Ok(SignInCheck::Rejected));
         assert_eq!(check(500, "oops"), Err(RequestError::Unexpected(500)));
+    }
+
+    fn delete(status: u16) -> (Result<(), DeleteDeviceError>, FakePocketSync) {
+        let mut pocket_sync = FakePocketSync::default();
+        pocket_sync.respond("DELETE", DEVICE, status, &test_error_response("x"));
+        let deleted = delete_device(
+            &mut pocket_sync,
+            &base("https://romm.example.com"),
+            &test_sign_in("rmm_secret"),
+        );
+        (deleted, pocket_sync)
+    }
+
+    #[test]
+    fn the_pockets_device_is_deleted_with_its_sign_in() {
+        let (deleted, pocket_sync) = delete(204);
+        assert_eq!(deleted, Ok(()));
+        assert_eq!(pocket_sync.sent[0].method, "DELETE");
+        assert_eq!(
+            pocket_sync.sent[0].headers,
+            [("Authorization", "Bearer rmm_secret".to_string())]
+        );
+    }
+
+    #[test]
+    fn romm_may_refuse_to_delete_the_device() {
+        for (status, error) in [
+            (401, DeleteDeviceError::Rejected),
+            (403, DeleteDeviceError::NotAllowed),
+            (404, DeleteDeviceError::NoDevice),
+            (
+                500,
+                DeleteDeviceError::Request(RequestError::Unexpected(500)),
+            ),
+        ] {
+            assert_eq!(delete(status).0, Err(error), "{status}");
+        }
     }
 
     #[test]

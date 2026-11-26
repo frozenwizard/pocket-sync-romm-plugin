@@ -32,7 +32,7 @@ RomM is a FastAPI app (`backend/main.py:118-124`) that keeps FastAPI's default s
 - **Base URL:** the server address, possibly under a sub-path (`https://host/romm/`). Keep a trailing `/` and join relative paths onto it, so `api/heartbeat` becomes `https://host/romm/api/heartbeat`. RomP tries `https://` then `http://` when the user types no scheme (`client.rs:27-51`).
 - **Auth header:** `Authorization: Bearer rmm_…`. `heartbeat`, `auth/device/init` and `auth/device/token` need none. When the server sets `DISABLE_DOWNLOAD_ENDPOINT_AUTH`, `GET /api/roms/{id}`, its content and firmware content need none either; sending the token anyway is harmless.
 - **Errors:** JSON `{"detail": "…"}`.
-  - **401:** no token, or one RomM doesn't accept: unknown, revoked, expired, or its user disabled (`raise_auth_error` in `decorators/auth.py`, `resolve_client_token` in `handler/auth/hybrid_auth.py`).
+  - **401:** no token, or one RomM doesn't accept: unknown, revoked, expired, or its user disabled (`raise_auth_error` in `decorators/auth.py`, `resolve_client_token` in `handler/auth/hybrid_auth.py`). Every cause gets the same `{"detail": "Not authenticated"}`. Deleting a device deletes its tokens (`client_tokens.device_id` has `ondelete="CASCADE"`, `models/client_token.py`), so a deleted device's token gets a 401, never the endpoint's 404.
   - **403:** the token lacks the permission (`{"detail": "Forbidden"}`, `decorators/auth.py:97`).
   - **404:** not found, or the endpoint is newer than the server. A token bound to one device gets a 404 for any other device (`require_token_device` in `utils/auth.py`).
   - **409:** save conflict.
@@ -115,6 +115,7 @@ RomM is a FastAPI app (`backend/main.py:118-124`) that keeps FastAPI's default s
 | Call | Permission | RomP | Plugin |
 |---|---|---|---|
 | `GET /api/devices/{device_id}` | `devices.read` | | ✓ |
+| `DELETE /api/devices/{device_id}` | `devices.write` | | ✓ |
 | `PUT /api/devices/{device_id}` | `devices.write` | ✓ | M6 |
 | `POST /api/devices/{device_id}/installs/claim` | `devices.write`, `roms.read` | ✓ | M6 |
 | `PUT /api/devices/{device_id}/installs/{request_id}` | `devices.write` | ✓ | M6 |
@@ -184,7 +185,7 @@ That's RomP's request (`client.rs:208-224`, `pairing.rs:4-18`). The plugin asks 
 
 - **Approval link:** the paths are relative; join them onto the base URL to make the link to open, or to show as a QR code.
 - **Older servers:** a 404 means a RomM older than 5.0, with no device sign-in.
-- **Same device every time:** `client_device_identifier` is the client's own stable ID. Pairing again with the same one gets the same RomM device back.
+- **Same device every time:** `client_device_identifier` is the client's own stable ID. Pairing again with the same one, approved by the same user, gets the same RomM device back (`get_device_by_client_identifier` in `device/auth.py`, `approve`). Otherwise RomM makes a new device and picks its ID (`uuid4`); a client can't choose it.
 
 `POST /api/auth/device/token`, JSON `{"device_code": "…"}`. Poll it every `interval` seconds:
 
@@ -432,6 +433,7 @@ A session's `status` is `created`, `duplicate` or `error`. A session may also ca
 
 ### Devices and Install on device
 
+- **`DELETE /api/devices/{device_id}`** → 204, no body. It deletes the device, its tokens, its save-sync records and its waiting install requests (`device/__init__.py`, `delete_device`). The permission check comes first (403 without `devices.write`), then a token bound to another device gets a 404.
 - **`PUT /api/devices/{device_id}`**, JSON `DeviceUpdatePayload` with every field optional. RomP sends only `{"capabilities": {"remote_install": true}}` to offer the device in RomM's "Install on device", and `false` to withdraw it. Returns `DeviceSchema`. RomP only does this when the heartbeat's `DEVICE_INSTALL.ENABLED` is true.
 - **`POST /api/devices/{device_id}/installs/claim`** (no body) → array of `InstallRequestSchema`. It takes every request waiting for the device and returns everything the device holds, oldest first. Only the device's own token can claim.
 

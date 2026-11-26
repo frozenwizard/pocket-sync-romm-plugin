@@ -6,10 +6,12 @@ use std::time::Duration;
 use crate::card::{Card, PocketId, PocketIdError, ReadError};
 use crate::pocket_sync::PocketSync;
 use crate::romm::pairing::{self, Permission, Poll, StartError};
-use crate::romm::{self, BaseUrl, ConnectError, RequestError, SignInCheck};
+use crate::romm::{
+    self, BaseUrl, ConnectError, DeleteDeviceError, RequestError, SignIn, SignInCheck,
+};
 use crate::ui::{
     self, BadServerChoice, ConnectChoice, HostMessage, Key, MenuChoice, OptionsChoice,
-    PluginMessage, Strings,
+    PluginMessage, Strings, UnpairChoice,
 };
 
 /// What the plugin can't do without some permissions: the log line saying it's off, and the
@@ -151,7 +153,16 @@ fn answer(
                 Ok(host) => ui::server(strings, host.as_deref()),
                 Err(end) => end,
             },
+            OptionsChoice::Unpair => match saved_sign_in(run, pocket_sync) {
+                Ok(Some(_)) => ui::unpair(strings),
+                Ok(None) => not_paired(strings, pocket_sync),
+                Err(end) => end,
+            },
             OptionsChoice::Back => server_question(run, pocket_sync),
+        },
+        ui::UNPAIR => match ui::chosen(strings, value)? {
+            UnpairChoice::Unpair => unpair(run, pocket_sync),
+            UnpairChoice::Cancel => ui::options(strings),
         },
         ui::MENU => match ui::chosen(strings, value)? {
             MenuChoice::SyncNow => {
@@ -191,14 +202,40 @@ fn saved_host(
         .map_err(|error| server_file_unreadable(&run.strings, error, pocket_sync))
 }
 
+/// The sign-in in `romm-sync/server.json`, read each time like the address. A file that can't be
+/// read is logged and ends the run (the error is `Exit`).
+fn saved_sign_in(
+    run: &Run,
+    pocket_sync: &mut impl PocketSync,
+) -> Result<Option<SignIn>, PluginMessage> {
+    run.card
+        .sign_in()
+        .map_err(|error| server_file_unreadable(&run.strings, error, pocket_sync))
+}
+
 /// Says `server.json` can't be read and why, and ends the run.
 fn server_file_unreadable(
     strings: &Strings,
     error: ReadError,
     pocket_sync: &mut impl PocketSync,
 ) -> PluginMessage {
-    pocket_sync.log(strings.get(Key::ServerFileUnreadable));
-    pocket_sync.log(&error.to_string());
+    end_run(
+        strings,
+        Key::ServerFileUnreadable,
+        &error.to_string(),
+        pocket_sync,
+    )
+}
+
+/// Logs `key`'s line, then `reason`, the error behind it, and ends the run.
+fn end_run(
+    strings: &Strings,
+    key: Key,
+    reason: &str,
+    pocket_sync: &mut impl PocketSync,
+) -> PluginMessage {
+    pocket_sync.log(strings.get(key));
+    pocket_sync.log(reason);
     PluginMessage::Exit
 }
 
@@ -211,9 +248,7 @@ fn use_host(run: &Run, typed: &str, pocket_sync: &mut impl PocketSync) -> Plugin
         return ui::bad_server(strings);
     }
     if let Err(error) = run.card.save_server_host(host) {
-        pocket_sync.log(strings.get(Key::ServerFileNotSaved));
-        pocket_sync.log(&error);
-        return PluginMessage::Exit;
+        return end_run(strings, Key::ServerFileNotSaved, &error, pocket_sync);
     }
     connect(run, host, pocket_sync)
 }
@@ -221,15 +256,30 @@ fn use_host(run: &Run, typed: &str, pocket_sync: &mut impl PocketSync) -> Plugin
 /// Checks the server at `host` is RomM 5.4 or newer and signs in, pairing the Pocket if needed,
 /// then shows the menu. Otherwise says why and offers to connect again.
 fn connect(run: &Run, host: &str, pocket_sync: &mut impl PocketSync) -> PluginMessage {
-    let strings = &run.strings;
+    match check_server(&run.strings, host, pocket_sync) {
+        Some(base) => sign_in(run, host, &base, pocket_sync),
+        None => ui::connect(&run.strings, host),
+    }
+}
+
+/// Checks the server at `host` is RomM 5.4 or newer, and returns the URL its paths join onto.
+/// `None` once the log says why it can't be used.
+fn check_server(
+    strings: &Strings,
+    host: &str,
+    pocket_sync: &mut impl PocketSync,
+) -> Option<BaseUrl> {
     // Logged first: when the server can't be reached, Extism ends the call before anything else is.
     pocket_sync.log(&strings.fill(Key::Connecting, &[("host", host)]));
     let Some(base) = romm::base_url(host) else {
         pocket_sync.log(&strings.fill(Key::BadSavedHost, &[("host", host)]));
-        return ui::connect(strings, host);
+        return None;
     };
     match romm::connect(pocket_sync, &base) {
-        Ok(version) => pocket_sync.log(&strings.fill(Key::Connected, &[("version", &version)])),
+        Ok(version) => {
+            pocket_sync.log(&strings.fill(Key::Connected, &[("version", &version)]));
+            Some(base)
+        }
         Err(error) => {
             pocket_sync.log(&match error {
                 ConnectError::Request(error) => request_error(strings, host, error),
@@ -241,10 +291,9 @@ fn connect(run: &Run, host: &str, pocket_sync: &mut impl PocketSync) -> PluginMe
                     strings.fill(Key::RommTooOld, &[("host", host), ("version", &version)])
                 }
             });
-            return ui::connect(strings, host);
+            None
         }
     }
-    sign_in(run, host, &base, pocket_sync)
 }
 
 /// Checks RomM still accepts the sign-in in `server.json`, pairing the Pocket when there's none or
@@ -257,9 +306,9 @@ fn sign_in(
     pocket_sync: &mut impl PocketSync,
 ) -> PluginMessage {
     let strings = &run.strings;
-    let saved = match run.card.sign_in() {
+    let saved = match saved_sign_in(run, pocket_sync) {
         Ok(saved) => saved,
-        Err(error) => return server_file_unreadable(strings, error, pocket_sync),
+        Err(end) => return end,
     };
     if let Some(saved) = saved {
         match romm::check_sign_in(pocket_sync, base, &saved) {
@@ -325,13 +374,67 @@ fn pair(run: &Run, host: &str, base: &BaseUrl, pocket_sync: &mut impl PocketSync
     };
 
     if let Err(error) = run.card.save_sign_in(&paired.sign_in) {
-        pocket_sync.log(strings.get(Key::SignInNotSaved));
-        pocket_sync.log(&error);
-        return PluginMessage::Exit;
+        return end_run(strings, Key::SignInNotSaved, &error, pocket_sync);
     }
     pocket_sync.log(strings.get(Key::Paired));
     log_missing_permissions(strings, &paired.permissions, pocket_sync);
     ui::menu(strings)
+}
+
+/// Unpairs the Pocket with the address and sign-in in `server.json`, read again since the file may
+/// have changed while the plugin waited for the answer.
+fn unpair(run: &Run, pocket_sync: &mut impl PocketSync) -> PluginMessage {
+    let host = match saved_host(run, pocket_sync) {
+        Ok(host) => host,
+        Err(end) => return end,
+    };
+    let sign_in = match saved_sign_in(run, pocket_sync) {
+        Ok(sign_in) => sign_in,
+        Err(end) => return end,
+    };
+    match (host, sign_in) {
+        (Some(host), Some(sign_in)) => unpair_with(run, &host, &sign_in, pocket_sync),
+        _ => not_paired(&run.strings, pocket_sync),
+    }
+}
+
+/// Unpairs the Pocket with `sign_in`: checks the server at `host`, deletes the Pocket's device in
+/// RomM, then the RomM address and sign-in on the Pocket, and asks for a server's address. The
+/// Pocket keeps its ID. When RomM doesn't delete the device, says why, changes nothing on the
+/// Pocket, and goes back to Options. Takes the sign-in rather than reading it, so one pairing just
+/// returned, not yet saved, works too.
+fn unpair_with(
+    run: &Run,
+    host: &str,
+    sign_in: &SignIn,
+    pocket_sync: &mut impl PocketSync,
+) -> PluginMessage {
+    let strings = &run.strings;
+    let Some(base) = check_server(strings, host, pocket_sync) else {
+        return ui::options(strings);
+    };
+    pocket_sync.log(strings.get(Key::Unpairing));
+    if let Err(error) = romm::delete_device(pocket_sync, &base, sign_in) {
+        let needs = ("permissions", Permission::DevicesWrite.name());
+        pocket_sync.log(&match error {
+            DeleteDeviceError::Rejected => strings.get(Key::UnpairRejected).into(),
+            DeleteDeviceError::NotAllowed => strings.fill(Key::UnpairNotAllowed, &[needs]),
+            DeleteDeviceError::NoDevice => strings.get(Key::UnpairNoDevice).into(),
+            DeleteDeviceError::Request(error) => request_error(strings, host, error),
+        });
+        return ui::options(strings);
+    }
+    if let Err(error) = run.card.delete_server_file() {
+        return end_run(strings, Key::ServerFileNotDeleted, &error, pocket_sync);
+    }
+    pocket_sync.log(strings.get(Key::Unpaired));
+    ui::server(strings, None)
+}
+
+/// Says the Pocket isn't paired, so there's nothing to unpair, and goes back to Options.
+fn not_paired(strings: &Strings, pocket_sync: &mut impl PocketSync) -> PluginMessage {
+    pocket_sync.log(strings.get(Key::NotPaired));
+    ui::options(strings)
 }
 
 /// Says which permissions pairing didn't grant, and which features are off without them.
@@ -394,7 +497,7 @@ mod tests {
     use crate::romm::pairing::{
         BACKOFF, POLL_INTERVAL, test_init_response, test_token_response, viewer_permissions,
     };
-    use crate::romm::{SignIn, test_error_response, test_sign_in};
+    use crate::romm::{test_error_response, test_sign_in};
     use std::fs;
     use tempfile::TempDir;
 
@@ -421,7 +524,8 @@ mod tests {
         root
     }
 
-    fn saved_sign_in() -> SignIn {
+    /// The sign-in `signed_in_card` saves.
+    fn card_sign_in() -> SignIn {
         test_sign_in("rmm_saved")
     }
 
@@ -429,7 +533,7 @@ mod tests {
     fn signed_in_card() -> TempDir {
         let root = card_with_server();
         Card::new(root.path())
-            .save_sign_in(&saved_sign_in())
+            .save_sign_in(&card_sign_in())
             .unwrap();
         root
     }
@@ -891,8 +995,94 @@ mod tests {
         let card = Card::new(root.path());
         assert_eq!(card.server_host(), Ok(Some(other.into())));
         // A server that moved accepts it, so there's no pairing again.
-        assert_eq!(card.sign_in(), Ok(Some(saved_sign_in())));
+        assert_eq!(card.sign_in(), Ok(Some(card_sign_in())));
         assert_eq!(pocket_sync.opened, Vec::<String>::new());
+    }
+
+    #[test]
+    fn unpair_deletes_the_device_in_romm_and_server_json_on_the_card() {
+        let root = signed_in_card();
+        let pocket_id = Card::new(root.path()).pocket_id().unwrap();
+        let mut pocket_sync = romm(HOST);
+        pocket_sync.respond("DELETE", DEVICE, 204, "");
+        let question = play(&root, &mut pocket_sync, &["Options", "Unpair", "Unpair"]);
+        assert_eq!(question, ui::server(&english(), None));
+
+        let card = Card::new(root.path());
+        assert!(!root.path().join("romm-sync/server.json").exists());
+        assert_eq!(card.pocket_id().unwrap(), pocket_id);
+        let deleted = pocket_sync.sent.last().unwrap();
+        assert_eq!((deleted.method, deleted.url.as_str()), ("DELETE", DEVICE));
+        assert_eq!(
+            deleted.headers,
+            [("Authorization", "Bearer rmm_saved".to_string())]
+        );
+        assert_eq!(
+            pocket_sync.lines[2..],
+            [english().get(Key::Unpairing), english().get(Key::Unpaired)]
+        );
+        assert_no_secrets(&pocket_sync.lines);
+    }
+
+    #[test]
+    fn unpair_asks_first_and_cancel_changes_nothing() {
+        let root = signed_in_card();
+        let mut pocket_sync = FakePocketSync::default();
+        let asked = play(&root, &mut pocket_sync, &["Options", "Unpair"]);
+        assert_eq!(asked, ui::unpair(&english()));
+        let question = play(&root, &mut pocket_sync, &["Options", "Unpair", "Cancel"]);
+        assert_eq!(question, ui::options(&english()));
+        assert!(pocket_sync.sent.is_empty());
+        assert_eq!(Card::new(root.path()).sign_in(), Ok(Some(card_sign_in())));
+    }
+
+    #[test]
+    fn a_pocket_without_a_sign_in_isnt_paired() {
+        let mut pocket_sync = FakePocketSync::default();
+        let question = play(
+            &card_with_server(),
+            &mut pocket_sync,
+            &["Options", "Unpair"],
+        );
+        assert_eq!(question, ui::options(&english()));
+        assert_eq!(pocket_sync.lines, [english().get(Key::NotPaired)]);
+    }
+
+    #[test]
+    fn when_romm_doesnt_delete_the_device_nothing_changes_on_the_pocket() {
+        let unexpected =
+            english().fill(Key::UnexpectedAnswer, &[("host", HOST), ("status", "500")]);
+        for (status, reason) in [
+            (401, english().get(Key::UnpairRejected).to_string()),
+            (
+                403,
+                english().fill(Key::UnpairNotAllowed, &[("permissions", "devices.write")]),
+            ),
+            (404, english().get(Key::UnpairNoDevice).to_string()),
+            (500, unexpected),
+        ] {
+            let root = signed_in_card();
+            let mut pocket_sync = romm(HOST);
+            pocket_sync.respond("DELETE", DEVICE, status, &test_error_response("x"));
+            let question = play(&root, &mut pocket_sync, &["Options", "Unpair", "Unpair"]);
+            assert_eq!(question, ui::options(&english()), "{status}");
+            assert_eq!(pocket_sync.lines.last(), Some(&reason));
+            let card = Card::new(root.path());
+            assert_eq!(card.sign_in(), Ok(Some(card_sign_in())));
+            assert_eq!(card.server_host(), Ok(Some(HOST.into())));
+        }
+    }
+
+    #[test]
+    fn unpair_needs_the_server_to_answer_as_romm() {
+        let root = signed_in_card();
+        let mut pocket_sync = FakePocketSync::default();
+        pocket_sync.respond("GET", HEARTBEAT, 404, "Not Found");
+        let question = play(&root, &mut pocket_sync, &["Options", "Unpair", "Unpair"]);
+        assert_eq!(question, ui::options(&english()));
+        let not_romm = english().fill(Key::NotRomm, &[("host", HOST), ("status", "404")]);
+        assert_eq!(pocket_sync.lines.last(), Some(&not_romm));
+        assert_eq!(Card::new(root.path()).sign_in(), Ok(Some(card_sign_in())));
     }
 
     #[test]

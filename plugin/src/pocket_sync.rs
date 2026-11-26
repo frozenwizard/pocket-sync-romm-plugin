@@ -27,6 +27,16 @@ impl Request {
         }
     }
 
+    /// A DELETE request for `url`.
+    pub fn delete(url: String) -> Self {
+        Request {
+            method: "DELETE",
+            url,
+            headers: Vec::new(),
+            body: None,
+        }
+    }
+
     /// A POST request sending `body` to `url` as JSON.
     pub fn post_json(url: String, body: &impl Serialize) -> Self {
         Request {
