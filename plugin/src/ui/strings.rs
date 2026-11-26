@@ -69,6 +69,20 @@ keys! {
     NoResponse => "log.no_response",
     NotRomm => "log.not_romm",
     RommTooOld => "log.romm_too_old",
+    UnexpectedAnswer => "log.unexpected_answer",
+    SignedIn => "log.signed_in",
+    SignInRejected => "log.sign_in_rejected",
+    Pairing => "log.pairing",
+    PairingLink => "log.pairing_link",
+    PairingDenied => "log.pairing_denied",
+    PairingExpired => "log.pairing_expired",
+    PairingBusy => "log.pairing_busy",
+    Paired => "log.paired",
+    SignInNotSaved => "log.sign_in_not_saved",
+    PermissionsMissing => "log.permissions_missing",
+    GamesOff => "log.games_off",
+    CollectionOff => "log.collection_off",
+    SavesOff => "log.saves_off",
 }
 
 /// The strings for one language.

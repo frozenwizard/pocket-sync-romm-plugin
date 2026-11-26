@@ -84,7 +84,7 @@ A plugin is Rust compiled to WebAssembly (`wasm32-wasip1`) with [Extism](https:/
 | Network | HTTP through Extism, only to hosts in `plugin.json`'s `allowed_hosts` (patterns matched against the host name, port excluded) | `"allowed_hosts": ["*"]`, since every user's RomM is at a different address |
 | Network failures | A request that gets no response (refused connection, unknown server, bad certificate, invalid URL, or a host not in `allowed_hosts`) ends the plugin's call: Extism returns the error from its host function, which traps, so the plugin can't catch it. No timeout is set, so a server that accepts the connection but never answers holds the call until Stop | The address must start with `http://` or `https://`; the plugin can't try one and fall back to the other. "Connecting to …" is logged before the first request, so the log names the server when a run ends this way. The first screen offers Options before connecting, so a bad address can be changed on the next run |
 | Response size | 50 MB per HTTP response (Extism's default; Pocket Sync doesn't change it) | Large files are downloaded in pieces with `Range` |
-| Other | `open_url` opens the browser; config key `locale` gives the system's language, even when Pocket Sync's "Always use English (US)" is ticked (`demo_host` doesn't set it); one thread; `std::thread::sleep` works; no time or memory limits set | Pairing opens RomM's approval page and polls; no WebSockets; no free-space query |
+| Other | `open_url` opens the browser, and ends the plugin's call when the browser can't be opened; config key `locale` gives the system's language, even when Pocket Sync's "Always use English (US)" is ticked (`demo_host` doesn't set it); one thread; `std::thread::sleep` works; no time or memory limits set | Pairing logs RomM's approval link and code before opening the page, then polls; no WebSockets; no free-space query |
 | Install and update | The user adds the GitHub repo link; Pocket Sync fetches the latest release's `plugin.wasm` and `plugin.json` | Releases are the distribution channel ([section 17](#17-build-and-release)) |
 
 ### 3.3 RomM
@@ -136,12 +136,12 @@ The card is the whole record: any computer that syncs the Pocket sees the same P
 2. **Check the card:** it must look like a Pocket card (`Cores/`, `Assets/`, `Platforms/`), or the run ends before anything is written.
 3. **Pocket ID:** if `romm-sync/device.json` is missing, create it with a new random ID. If it's there but can't be read, the run ends and the file is left alone: a new ID would make RomM see a different Pocket.
 4. **Server:** if the card has no `romm-sync/server.json`, ask for the address (`Text`) and save it there. It must start with `http://` or `https://` and name a server, with an optional port and path; the plugin checks this before saving, with the URL parser Extism uses, because Extism ends the call on an address it can't parse ([3.2](#32-the-plugin-host-pocket-sync), network failures). An answer that isn't an address, an empty one included, offers **Try again** and **Cancel**: on first setup Cancel ends the run, and when changing the address it goes back to Options. Then check `GET /api/heartbeat` answers and is 5.4 or newer.
-5. **Pair:** start pairing with the Pocket ID and the name "Analogue Pocket", open RomM's approval page (`open_url`), and poll until it's approved, denied or expired ([8.1](#81-pairing)). The approver can rename the device on that page. Save the token as `api_key` and RomM's device ID as `romm_device_id` in `server.json`. Check the granted permissions against the ones requested and say which features are off if any were left out.
+5. **Pair:** start pairing with the Pocket ID and the name "Analogue Pocket", log the approval link and code, open RomM's approval page (`open_url`), and poll every 2 seconds until it's approved, denied or expired ([8.1](#81-pairing)). The approver can rename the device on that page. Save the token as `api_key` and RomM's device ID as `romm_device_id` in `server.json`. Check the granted permissions against the ones requested and say which features are off if any were left out. A denial, an expired code or a failed request offers Connect again.
 6. **Check the server:** if `server.json` already had a RomM device ID and it differs from the one pairing returned, the address now points at a different RomM server ([13](#13-safety-rules), rule 8).
 7. **Choose the Pocket collection:** offer **Use "Analogue Pocket"** (created if it doesn't exist) or the user's other regular collections as buttons. Smart and virtual collections are never listed. Save the choice as `collection` in `server.json`.
 8. Offer **Sync now**.
 
-Once `server.json` exists, a run starts with **Connect**, **Options** and **Exit**. Connect runs the heartbeat check (step 4), pairs if there's no `api_key` (steps 5 and 6), asks for a collection if there's none (step 7), and shows the menu. Options is described in [5.5](#55-options-and-settings).
+Once `server.json` exists, a run starts with **Connect**, **Options** and **Exit**. Connect runs the heartbeat check (step 4), checks the saved sign-in by reading the Pocket's device (`GET /api/devices/{romm_device_id}`), pairs if there's no sign-in or RomM rejects it (steps 5 and 6), asks for a collection if there's none (step 7), and shows the menu. Options is described in [5.5](#55-options-and-settings).
 
 The same Pocket on a second computer needs no setup: the card carries the address, sign-in and collection. If that computer reaches the server at a different address, the user changes it in Options, which changes it for every computer.
 
@@ -178,7 +178,8 @@ Whichever copy isn't chosen is kept ([10.5](#105-conflicts-and-keeping-the-other
 ### 5.5 Options and Settings
 
 **Options**, on the first screen, works before connecting, so a run that ended on a bad address can still reach it:
-- **Change server address:** asks for the new address, saves it in `server.json` (keeping the rest of the file) and connects. Editing `server.json` by hand works too; the plugin reads it again each time it's needed.
+- **Change server address:** asks for the new address, saves it in `server.json` (keeping the rest of the file, the sign-in included) and connects. A server that moved accepts the sign-in, so there's no pairing again. A different server rejects it, so Connect pairs, and the wrong-server check catches the change ([13](#13-safety-rules), rule 8). Editing `server.json` by hand works too; the plugin reads it again each time it's needed.
+- **Pocket name** (later): the name RomM shows for this Pocket's device, "Analogue Pocket" until it's changed here or on RomM's approval page.
 
 The menu's **Settings**, once connected, offers:
 - **Change collection:** pick another regular collection. The next sync plans the difference, with the usual confirmation before removals.
@@ -193,9 +194,9 @@ The plugin is one Rust crate with modules split along these lines. Logic that do
 | `lib` (entry) | `start` and `handle_response`; holds the run's state; turns errors into log lines and a menu; picks the language, fixed at `en-US` until Pocket Sync passes the one the user chose |
 | `flow` | The state machine: which phase runs next and which question to ask ([section 12](#12-control-flow)) |
 | `ui` | Building `Choice` and `Text` messages, naming questions, logging; every string looked up in the bundled `locales/<lang>/index.json` files (Pocket Sync's layout), each falling back from `de-AT` to `de` to English. Pocket Sync sends back the button's text as the answer, so answers are matched to the choice they stand for, never to English text |
-| `pocket_sync` | What the plugin uses of Pocket Sync (the log, HTTP; later `open_url`) behind a trait, so tests use a fake in place of Extism |
+| `pocket_sync` | What the plugin uses of Pocket Sync (the log, HTTP, `open_url`, waiting) behind a trait, so tests use a fake in place of Extism |
 | `romm::client` | HTTP over Extism: base URL, bearer token, JSON, error mapping (401, 403, 404, 409, 429), multipart bodies, `Range` downloads |
-| `romm::pairing` | Device pairing: init, open the approval page, poll, return the token and device ID |
+| `romm::pairing` | Device pairing's calls: start it, and poll it once for the token and device ID; the permissions asked for. `flow` opens the approval page, waits between polls and writes the log, since that's text the user sees |
 | `romm::api` | Typed calls: heartbeat, devices, collections, games, files, saves, installs |
 | `card` | Checking the card, reading `core.json` and `data.json`, card paths, the plugin's card files (`device.json`, `server.json`) |
 | `platforms` | RomM system ↔ Pocket platform ID mapping, checked against installed cores |
@@ -243,6 +244,8 @@ Every file has a `schema` number, so a later plugin can tell an older file. `dev
 
 - `host` is the server's address, starting with `http://` or `https://`, possibly with a sub-path (`https://example.com/romm`). It's the only field required, so the file can be written by hand with just `{"host": "…"}`; the plugin fills in the rest.
 - `api_key` is the client token from pairing. `romm_device_id` is RomM's ID for this Pocket's device, returned by pairing. It says which RomM server the manifest's IDs belong to: pairing with a different server gives a different device ID ([13](#13-safety-rules), rule 8).
+- Connect checks the sign-in each time. When either field is missing, `api_key` holds a space or a line break (which can't be sent), or RomM rejects it (revoked, expired, or from another server), the Pocket pairs again.
+- The permissions granted and the token's expiry aren't stored. RomM narrows a token's permissions to whatever its user's role allows at the time, so a saved list could be wrong, and Connect's check catches an expired token.
 - `collection` is the Pocket collection.
 - Changing the address (in Options, or by hand) keeps every other field, including fields the plugin doesn't know. The plugin reads the file again each time it needs it, so edits made while it waits are used.
 - A `server.json` with no address in `host` (missing, empty or not text) asks for the address, and entering one keeps the file's other fields. One that can't be read stops the run, wherever it's read, and is left alone, since it may hold the sign-in.
@@ -314,6 +317,7 @@ Permissions requested when pairing, covering every planned milestone so nobody h
 | Server version and install setting | `GET /api/heartbeat` (`SYSTEM.VERSION`, `DEVICE_INSTALL.ENABLED`, `DEVICE_INSTALL.EXCLUDED_PLATFORM_SLUGS`) | none |
 | Start pairing | `POST /api/auth/device/init` `{client_device_identifier, name, client, platform, client_version, requested_scopes}` → `device_code`, `user_code`, `verification_path`, `verification_path_complete`, `expires_in`, `interval` | none (rate-limited) |
 | Finish pairing | `POST /api/auth/device/token` `{device_code}` → `access_token`, `device_id`, `scopes`, `expires_at` | none |
+| Check the sign-in on Connect | `GET /api/devices/{device_id}` | `devices.read`; a `403` still means signed in |
 | Systems | `GET /api/platforms` | `platforms.read` |
 | List collections | `GET /api/collections` (regular only are offered) | `collections.read` |
 | One collection (quick change check) | `GET /api/collections/{id}` → `rom_ids`, `updated_at` | `collections.read` |
@@ -333,7 +337,10 @@ Permissions requested when pairing, covering every planned milestone so nobody h
 
 ### 8.1 Pairing
 
-- Init returns `expires_in` 600 seconds and `interval` 5 seconds.
+- Init takes `client` `romm-sync`, `platform` `analogue-pocket` (the `emulator` label of the Pocket's saves) and the plugin's version as `client_version`. It returns `expires_in` 600 seconds and `interval` 5 seconds.
+- The approval link is `verification_path_complete` joined onto the server address, sub-path included.
+- The plugin polls every 2 seconds (`POLL_INTERVAL` in `plugin/src/romm/pairing.rs`), faster than `interval`. While waiting, RomM answers `slow_down` to a poll inside 5 seconds of the last, which the plugin treats as still waiting; the first poll after approval gets the token all the same. A `429` adds 5 seconds to the wait.
+- The approver chooses which of the requested permissions to grant; a RomM user with the Viewer role can grant only the `.read` ones.
 - Polling `/api/auth/device/token` answers:
   - **400 `authorization_pending`** while waiting;
   - **400 `slow_down`** when polled faster than the interval;
@@ -536,7 +543,7 @@ Pocket Sync calls `start()` once, then `handle_response()` with each answer, and
 start ──► Check card, Pocket ID ──► [no server.json] ──Text──► Connect
                                 └─► [server.json] ──Choice──► Connect / Options / Exit
 Options ──► Change server address ──Text──► Connect
-Connect ──► Heartbeat ──► [no api_key] Pair ──► [no collection] ──Choice──► Menu
+Connect ──► Heartbeat ──► Sign-in check ──► [none, or rejected] Pair ──► [no collection] ──Choice──► Menu
 Menu ──Sync now──► (M6 Claim) ──► Plan ──► Saves ──Choice per conflict──► Confirm ──Choice──►
        Transfer ──► New-game saves ──► (M6 Report) ──► Finish ──► Menu
 Menu ──Settings──► change collection / sign out of this Pocket
@@ -570,6 +577,7 @@ Menu ──Exit──► Exit
 - `allowed_hosts: ["*"]` lets the plugin reach any web address. Pocket Sync doesn't show this to users, so the README says so plainly, and the plugin only ever contacts the RomM address the user entered.
 - **The sign-in is on the card,** as `api_key` in `server.json`. Anyone holding the card can use it, with the permissions granted at pairing (games, collections, saves and the device), until it's revoked in RomM. That's the price of a card that syncs from any computer with no setup. The README tells users to revoke a lost card's token.
 - The token is bound to the Pocket's RomM device. Revoking that device's token in RomM's settings cuts the Pocket off on every computer.
+- Changing the address keeps the sign-in, so the next Connect sends it to the new address. A mistyped address that reaches someone else's server would receive it.
 - Each pairing adds a token, and earlier ones stay valid until revoked in RomM (a RomM limitation).
 - Nothing personal goes into the repo: no addresses, user names or real tokens in code, tests or fixtures.
 
@@ -621,11 +629,10 @@ Cases worth a test each:
   - A GitHub release with `plugin.wasm` and `plugin.json` attached.
   - Pocket Sync installs and updates from the latest release, and records its tag as the version.
   - The plugin's ID in Pocket Sync is `<owner>-pocket-sync-romm-plugin`, which also names its `host/` folder. Renaming the repo makes it a different plugin and strands every user's save backups in `host/`, so the name is fixed.
-- **CI (later):**
-  - format, Clippy and unit tests;
-  - the `wasm32-wasip1` build;
-  - the `demo_host` flow tests;
-  - attaching the release files.
+- **CI:**
+  - `.github/workflows/ci.yml` runs format, Clippy for both targets, the unit tests and the `wasm32-wasip1` build on every pull request and every push to `main`;
+  - `.github/workflows/add_to_release.yml` builds and attaches the release files when a release is published;
+  - later: the `demo_host` flow tests.
 
 ## 18. Milestones
 

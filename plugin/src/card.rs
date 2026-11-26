@@ -12,6 +12,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::romm::SignIn;
+
 /// Folders every Pocket card has.
 const POCKET_FOLDERS: [&str; 3] = ["Cores", "Assets", "Platforms"];
 
@@ -39,6 +41,13 @@ impl fmt::Display for PocketId {
     }
 }
 
+#[cfg(test)]
+impl PocketId {
+    pub fn parse(text: &str) -> Option<Self> {
+        Uuid::parse_str(text).ok().map(PocketId)
+    }
+}
+
 /// `romm-sync/device.json`.
 #[derive(Serialize, Deserialize)]
 struct DeviceFile {
@@ -59,12 +68,13 @@ fn schema() -> u32 {
 }
 
 /// `romm-sync/server.json` as the plugin writes it: `schema` and `host` first, then the rest of the
-/// file as it was (the sign-in and the collection). It's read as plain JSON, so a file written by
-/// hand, or with a field this plugin can't read, keeps its other fields when the host changes.
+/// file. It's read as plain JSON, so a file written by hand, or with a field this plugin can't
+/// read, keeps its other fields when the plugin changes one.
 #[derive(Serialize)]
 struct ServerFile {
     schema: Value,
-    host: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host: Option<Value>,
     #[serde(flatten)]
     rest: Map<String, Value>,
 }
@@ -149,25 +159,52 @@ impl Card {
     /// file or it has no address in `host`. The error says why the file can't be read.
     pub fn server_host(&self) -> Result<Option<String>, ReadError> {
         let file = self.read::<Map<String, Value>>(SERVER_FILE)?;
-        let host = file.as_ref().and_then(|file| file.get("host"));
-        Ok(host
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|host| !host.is_empty())
-            .map(String::from))
+        Ok(text_field(file.as_ref(), "host"))
     }
 
-    /// Sets `host` in `romm-sync/server.json`, keeping the rest of the file. A missing file is
-    /// created. One that can't be read is left alone, since it may hold the sign-in.
+    /// The sign-in in `romm-sync/server.json`, from `api_key` and `romm_device_id`. `None` unless
+    /// both are there and make a sign-in that can be used (`SignIn::new`).
+    pub fn sign_in(&self) -> Result<Option<SignIn>, ReadError> {
+        let file = self.read::<Map<String, Value>>(SERVER_FILE)?;
+        let api_key = text_field(file.as_ref(), "api_key");
+        let device_id = text_field(file.as_ref(), "romm_device_id");
+        Ok(api_key
+            .zip(device_id)
+            .and_then(|(api_key, device_id)| SignIn::new(api_key, device_id)))
+    }
+
+    /// Sets `host` in `romm-sync/server.json`, keeping the rest of the file, sign-in included. A
+    /// missing file is created. One that can't be read is left alone, since it may hold the
+    /// sign-in.
     pub fn save_server_host(&self, host: &str) -> Result<(), String> {
+        self.change_server_file(|file| {
+            file.insert("host".into(), host.into());
+        })
+    }
+
+    /// Sets `api_key` and `romm_device_id` in `romm-sync/server.json` to `sign_in`, keeping the
+    /// rest of the file. One that can't be read is left alone.
+    pub fn save_sign_in(&self, sign_in: &SignIn) -> Result<(), String> {
+        self.change_server_file(|file| {
+            file.insert("api_key".into(), sign_in.api_key().into());
+            file.insert("romm_device_id".into(), sign_in.device_id().into());
+        })
+    }
+
+    /// Reads `romm-sync/server.json` as plain JSON, applies `change`, and writes it back. A missing
+    /// file starts empty. The error says why the file can't be read or written.
+    fn change_server_file(
+        &self,
+        change: impl FnOnce(&mut Map<String, Value>),
+    ) -> Result<(), String> {
         let mut rest = self
             .read::<Map<String, Value>>(SERVER_FILE)
             .map_err(|error| error.to_string())?
             .unwrap_or_default();
-        rest.remove("host");
+        change(&mut rest);
         let file = ServerFile {
             schema: rest.remove("schema").unwrap_or(SCHEMA.into()),
-            host: host.into(),
+            host: rest.remove("host"),
             rest,
         };
         self.write(SERVER_FILE, &file)
@@ -218,6 +255,12 @@ impl Card {
     fn path(&self, name: &str) -> PathBuf {
         self.root.join(FOLDER).join(name)
     }
+}
+
+/// The text in field `name` of `file`, trimmed. `None` when it's missing, empty or not text.
+fn text_field(file: Option<&Map<String, Value>>, name: &str) -> Option<String> {
+    let text = file?.get(name)?.as_str()?.trim();
+    (!text.is_empty()).then(|| text.into())
 }
 
 /// Where `error` is in a file, and what kind of problem it is. `path` is the field being read, `.`
@@ -278,6 +321,7 @@ pub fn test_card() -> tempfile::TempDir {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::romm::test_sign_in;
     use extism_pdk::json::json;
     use tempfile::TempDir;
 
@@ -481,7 +525,50 @@ mod tests {
         let card = Card::new(root.path());
         assert!(card.server_host().is_err());
         assert!(card.save_server_host("https://other.example.com").is_err());
+        assert!(card.sign_in().is_err());
+        assert!(card.save_sign_in(&test_sign_in("rmm_new")).is_err());
         assert_eq!(fs::read_to_string(server_file(&root)).unwrap(), broken);
+    }
+
+    #[test]
+    fn a_saved_sign_in_is_read_back_and_keeps_the_rest_of_server_json() {
+        let root = test_card();
+        fs::create_dir(root.path().join(FOLDER)).unwrap();
+        let before =
+            json!({"host": "https://romm.example.com", "api_key": "rmm_old", "collection": 12});
+        fs::write(server_file(&root), before.to_string()).unwrap();
+        let card = Card::new(root.path());
+        card.save_sign_in(&test_sign_in("rmm_new")).unwrap();
+        assert_eq!(card.sign_in(), Ok(Some(test_sign_in("rmm_new"))));
+        assert_eq!(
+            read_json(server_file(&root)),
+            json!({
+                "schema": 1,
+                "host": "https://romm.example.com",
+                "api_key": "rmm_new",
+                "romm_device_id": "c1a2",
+                "collection": 12,
+            })
+        );
+    }
+
+    #[test]
+    fn a_sign_in_needs_a_usable_token_and_a_device_id() {
+        let root = test_card();
+        fs::create_dir(root.path().join(FOLDER)).unwrap();
+        let card = Card::new(root.path());
+        assert_eq!(card.sign_in(), Ok(None));
+        for file in [
+            json!({"api_key": "rmm_k"}),
+            json!({"romm_device_id": "d"}),
+            json!({"api_key": "", "romm_device_id": "d"}),
+            json!({"api_key": "rmm_k", "romm_device_id": 5}),
+            json!({"api_key": "rmm k", "romm_device_id": "d"}),
+            json!({"api_key": "rmm_k\nX-Other: 1", "romm_device_id": "d"}),
+        ] {
+            fs::write(server_file(&root), file.to_string()).unwrap();
+            assert_eq!(card.sign_in(), Ok(None), "{file}");
+        }
     }
 
     // A value in the file could be a token, and errors go to the log.

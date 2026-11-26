@@ -75,7 +75,7 @@ Once this repo has a release, add `https://github.com/frozenwizard/pocket-sync-r
 
 ## Code conventions
 
-- **Logic builds and tests natively.** `plugin/src/lib.rs` is the only module that talks to Extism. Everything the plugin uses from Pocket Sync (the log, HTTP, later `open_url`) goes through the `PocketSync` trait in `pocket_sync.rs`, and tests use `FakePocketSync` in its place.
+- **Logic builds and tests natively.** `plugin/src/lib.rs` is the only module that talks to Extism. Everything the plugin uses from Pocket Sync (the log, HTTP, `open_url`, waiting) goes through the `PocketSync` trait in `pocket_sync.rs`, and tests use `FakePocketSync` in its place.
 - **The plugin is a state machine.** Pocket Sync shows a question only when a call returns one, so `flow.rs` returns one question per call, and `Run` holds what the plugin remembers between calls. Each question has a name that comes back with its answer.
 - **The plugin's text lives in locale files.** Every string the user sees is in `plugin/locales/en/index.json`, reached through a `Key` in the `keys!` table in `plugin/src/ui/strings.rs`. Placeholders look like `{host}` and are filled by `Strings::fill`. Pocket Sync sends back a button's label as the answer, so the buttons of one question need different labels; a test checks this.
 - **Safety rules come first.** [Architecture §13](docs/Architecture.md#13-safety-rules) lists them: never touch a file the plugin didn't write, never leave half a file on the card, never lose a save.

@@ -32,9 +32,9 @@ RomM is a FastAPI app (`backend/main.py:118-124`) that keeps FastAPI's default s
 - **Base URL:** the server address, possibly under a sub-path (`https://host/romm/`). Keep a trailing `/` and join relative paths onto it, so `api/heartbeat` becomes `https://host/romm/api/heartbeat`. RomP tries `https://` then `http://` when the user types no scheme (`client.rs:27-51`).
 - **Auth header:** `Authorization: Bearer rmm_…`. `heartbeat`, `auth/device/init` and `auth/device/token` need none. When the server sets `DISABLE_DOWNLOAD_ENDPOINT_AUTH`, `GET /api/roms/{id}`, its content and firmware content need none either; sending the token anyway is harmless.
 - **Errors:** JSON `{"detail": "…"}`.
-  - **401:** no token, or an invalid one.
+  - **401:** no token, or one RomM doesn't accept: unknown, revoked, expired, or its user disabled (`raise_auth_error` in `decorators/auth.py`, `resolve_client_token` in `handler/auth/hybrid_auth.py`).
   - **403:** the token lacks the permission (`{"detail": "Forbidden"}`, `decorators/auth.py:97`).
-  - **404:** not found, or the endpoint is newer than the server.
+  - **404:** not found, or the endpoint is newer than the server. A token bound to one device gets a 404 for any other device (`require_token_device` in `utils/auth.py`).
   - **409:** save conflict.
   - **422:** bad parameters; `detail` is then a list of `{loc, msg, type}`.
   - **429:** rate limited.
@@ -114,6 +114,7 @@ RomM is a FastAPI app (`backend/main.py:118-124`) that keeps FastAPI's default s
 
 | Call | Permission | RomP | Plugin |
 |---|---|---|---|
+| `GET /api/devices/{device_id}` | `devices.read` | | ✓ |
 | `PUT /api/devices/{device_id}` | `devices.write` | ✓ | M6 |
 | `POST /api/devices/{device_id}/installs/claim` | `devices.write`, `roms.read` | ✓ | M6 |
 | `PUT /api/devices/{device_id}/installs/{request_id}` | `devices.write` | ✓ | M6 |
@@ -202,7 +203,11 @@ That's RomP's request (`client.rs:208-224`, `pairing.rs:4-18`). The plugin asks 
 
 - **Device ID:** `device_id` is RomM's ID for the device, the one save and install calls take. RomP fetches the same value from `GET /api/users/me` as `current_device_id`, which needs `me.read`.
 - **Granted permissions:** `scopes` lists what was actually granted, which can be fewer than requested. RomP saves it and turns features off when a permission is missing (`app/save_sync.rs:63-95`).
+  - The approver can grant only what was requested and what their own role holds (`device/auth.py`, `approve`); a Viewer's role holds only the `.read` permissions (`handler/auth/constants.py`).
+  - On every request, a token's permissions are narrowed again to its user's current role (`effective_scopes`, `handler/auth/hybrid_auth.py`), so the list from pairing can go stale.
+- **Expiry:** the approver can give the token an expiry (`expires_in` on approve), returned as `expires_at`. An expired token is treated as unknown.
 - **The token is handed out once.** The next poll gets `expired_token`.
+- **`slow_down` only while waiting:** RomM records each poll's time and answers `slow_down` to one inside `interval` of the last, but only while the pairing is pending (`device/auth.py`, `token`). The first poll after approval gets the token however soon it comes.
 
 ### User
 
