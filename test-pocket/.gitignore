@@ -1,0 +1,4 @@
+# The plugin's files: the Pocket's ID, and the RomM address and sign-in. The sign-in is a secret.
+romm-sync/
+# Pocket Sync's settings for this Pocket, written when it opens the folder.
+pocket-sync.json

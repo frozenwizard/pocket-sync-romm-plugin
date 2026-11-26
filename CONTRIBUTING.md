@@ -13,7 +13,6 @@ Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 ## Set up
 
 - Install Rust with [rustup](https://rustup.rs). `rust-toolchain.toml` picks stable Rust and adds the `wasm32-wasip1` target.
-- To try the plugin you need a RomM server, version 5.4 or newer.
 
 ## Build and check
 
@@ -34,44 +33,7 @@ cargo build -p plugin --release --target wasm32-wasip1
 
 ## Run the plugin
 
-The plugin reads and writes two folders: `pocket/`, the root of the Pocket's SD card, and `host/`, a private folder on the computer. It only runs on a folder that looks like a Pocket's card, with `Cores/`, `Assets/` and `Platforms/` in it.
-
-### In demo_host
-
-[pocket-plugin](https://github.com/openfpga-library/pocket-plugin)'s `demo_host` runs a plugin in the terminal. Clone it once next to this repo, then, from this repo:
-
-```sh
-cargo build -p plugin --release --target wasm32-wasip1
-mkdir -p target/run/pocket/Cores target/run/pocket/Assets target/run/pocket/Platforms target/run/host
-cargo run --manifest-path ../pocket-plugin/Cargo.toml -p demo_host -- \
-  --folder-plugin target/wasm32-wasip1/release \
-  --pocket-path target/run/pocket \
-  --host-folder target/run/host
-```
-
-- Up and Down highlight a button, and Enter sends it. Nothing is highlighted at first: pressing Enter then clears the question without sending an answer, and only Esc gets out.
-- Esc sends `Kill` and quits.
-- `demo_host` checks for answers once a second, so replies can take a moment.
-- `target/run/` is a test card for your own use. `cargo clean` deletes it along with the build.
-
-### In Pocket Sync
-
-Pocket Sync installs plugins only from a release in a public GitHub repo. It downloads the release's files without the GitHub token in its settings (v7.2.1), so a private repo's files fail to download. This repo has no release yet, so for now, install pocket-plugin's example plugin and run your build in its place:
-
-1. In Pocket Sync, add `https://github.com/openfpga-library/pocket-plugin` under **Plugins → Add**.
-2. Build, then copy `target/wasm32-wasip1/release/plugin.wasm` and `plugin.json` into the example plugin's folder, `openfpga-library-pocket-plugin/`, inside Pocket Sync's data folder:
-
-   | System | Pocket Sync's data folder |
-   |---|---|
-   | macOS | `~/Library/Application Support/today.neil.pocket-sync/` |
-   | Windows | `%APPDATA%\today.neil.pocket-sync\` |
-   | Linux | `~/.local/share/today.neil.pocket-sync/` |
-
-3. Reopen the Plugins page. The plugin shows as RomM Sync and uses the example's `host/` folder.
-
-Pocket Sync keeps using the copied files until the installed plugin has a newer release. Copy them again after each build, and again if the example plugin publishes a release.
-
-Once this repo has a release, add `https://github.com/frozenwizard/pocket-sync-romm-plugin` instead, and copy local builds into its folder, `frozenwizard-pocket-sync-romm-plugin/`.
+[docs/running-locally.md](docs/running-locally.md) shows how to run your build in `demo_host` or Pocket Sync, on the test Pocket in `test-pocket/`.
 
 ## Code conventions
 
