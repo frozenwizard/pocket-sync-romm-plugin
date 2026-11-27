@@ -20,12 +20,20 @@ impl BaseUrl {
     /// The URL of the API endpoint at `segments` under `api/`, each escaped as one path segment, so
     /// a value from the card can't change which endpoint is called.
     fn api(&self, segments: &[&str]) -> String {
+        self.api_with_query(segments, &[])
+    }
+
+    /// `api`'s URL with `query` added, each name and value escaped.
+    fn api_with_query(&self, segments: &[&str], query: &[(&str, &str)]) -> String {
         let mut url = self.0.clone();
         url.path_segments_mut()
             .expect("an http URL has a path")
             .pop_if_empty()
             .push("api")
             .extend(segments);
+        if !query.is_empty() {
+            url.query_pairs_mut().extend_pairs(query);
+        }
         url.into()
     }
 
@@ -120,6 +128,85 @@ impl From<RequestError> for DeleteDeviceError {
     fn from(error: RequestError) -> Self {
         DeleteDeviceError::Request(error)
     }
+}
+
+/// Why RomM didn't list the collections or games asked for.
+#[derive(Debug, PartialEq)]
+pub enum ListError {
+    /// RomM doesn't accept the token (expired, revoked, its device deleted, or from another
+    /// server).
+    Rejected,
+    /// The token works, but pairing didn't grant the permission the list needs.
+    NotAllowed,
+    Request(RequestError),
+}
+
+impl From<RequestError> for ListError {
+    fn from(error: RequestError) -> Self {
+        ListError::Request(error)
+    }
+}
+
+/// A regular collection in RomM: the user's own, or another user's public one. Keeps only what the
+/// plugin reads.
+#[derive(Debug, Deserialize)]
+pub struct Collection {
+    pub id: u64,
+    pub name: String,
+}
+
+/// A game in a collection, with its files. Keeps only the fields syncing needs.
+#[derive(Debug, Deserialize)]
+#[expect(dead_code, reason = "only logged until Sync now plans from it")]
+pub struct Game {
+    pub id: u64,
+    /// `None` when RomM hasn't matched the game.
+    pub name: Option<String>,
+    pub platform_slug: String,
+    pub files: Vec<GameFile>,
+}
+
+/// One of a game's files.
+#[derive(Debug, Deserialize)]
+#[expect(dead_code, reason = "only logged until Sync now plans from it")]
+pub struct GameFile {
+    pub id: u64,
+    pub file_name: String,
+    pub file_size_bytes: u64,
+    pub md5_hash: Option<String>,
+    /// `game`, `dlc`, `hack`, `manual`…, or `None` when uncategorised.
+    pub category: Option<String>,
+    /// The files inside, when it's an archive.
+    pub archive_members: Option<Vec<ArchiveMember>>,
+}
+
+impl GameFile {
+    /// Whether it may be the game itself rather than a manual, DLC, patch or other extra: the first
+    /// filter of Architecture §9.2, before the extensions the core accepts. RomM categorises a file
+    /// by the top folder it's in within a game's folder, so a game that's a single file, a file at
+    /// the top of a game's folder, or one in a folder such as `Extras/`, has no category.
+    pub fn is_game(&self) -> bool {
+        matches!(self.category.as_deref(), None | Some("game"))
+    }
+}
+
+/// A file inside an archive.
+#[derive(Debug, Deserialize)]
+#[expect(dead_code, reason = "only logged until Sync now plans from it")]
+pub struct ArchiveMember {
+    pub name: String,
+    pub size: u64,
+    pub md5_hash: Option<String>,
+}
+
+/// How many games to ask for at once. Fewer than RomM allows, so a page with every game's files
+/// stays well under the 50 MB Extism allows a response.
+const GAMES_PER_PAGE: usize = 200;
+
+/// One page of `GET /api/roms`.
+#[derive(Deserialize)]
+struct GamesPage {
+    items: Vec<Game>,
 }
 
 /// `GET /api/heartbeat`, keeping only what the plugin reads.
@@ -232,6 +319,67 @@ pub fn delete_device(
         401 => Err(DeleteDeviceError::Rejected),
         403 => Err(DeleteDeviceError::NotAllowed),
         404 => Err(DeleteDeviceError::NoDevice),
+        status => Err(RequestError::Unexpected(status).into()),
+    }
+}
+
+/// The regular collections `sign_in`'s user can see: their own, and other users' public ones.
+pub fn collections(
+    pocket_sync: &mut impl PocketSync,
+    base: &BaseUrl,
+    sign_in: &SignIn,
+) -> Result<Vec<Collection>, ListError> {
+    let request = Request::get(base.api(&["collections"])).with_bearer(sign_in.api_key());
+    get_list(pocket_sync, &request)
+}
+
+/// Every game in collection `collection_id`, with its files, a page at a time.
+pub fn collection_games(
+    pocket_sync: &mut impl PocketSync,
+    base: &BaseUrl,
+    sign_in: &SignIn,
+    collection_id: u64,
+) -> Result<Vec<Game>, ListError> {
+    let collection_id = collection_id.to_string();
+    let limit = GAMES_PER_PAGE.to_string();
+    let mut games = Vec::new();
+    loop {
+        let offset = games.len().to_string();
+        let query = [
+            ("collection_id", collection_id.as_str()),
+            ("with_files", "true"),
+            // RomM adds these unless told not to, and the ID index scans every game on each page.
+            ("with_provider_metadata", "false"),
+            ("with_char_index", "false"),
+            ("with_filter_values", "false"),
+            ("with_rom_id_index", "false"),
+            // In a fixed order, so no game moves between pages.
+            ("order_by", "id"),
+            ("order_dir", "asc"),
+            ("limit", limit.as_str()),
+            ("offset", offset.as_str()),
+        ];
+        let request =
+            Request::get(base.api_with_query(&["roms"], &query)).with_bearer(sign_in.api_key());
+        let page: GamesPage = get_list(pocket_sync, &request)?;
+        let last_page = page.items.len() < GAMES_PER_PAGE;
+        games.extend(page.items);
+        if last_page {
+            return Ok(games);
+        }
+    }
+}
+
+/// Sends `request` for a list and reads its JSON body.
+fn get_list<T: DeserializeOwned>(
+    pocket_sync: &mut impl PocketSync,
+    request: &Request,
+) -> Result<T, ListError> {
+    let response = send(pocket_sync, request)?;
+    match response.status {
+        200 => Ok(parse(&response)?),
+        401 => Err(ListError::Rejected),
+        403 => Err(ListError::NotAllowed),
         status => Err(RequestError::Unexpected(status).into()),
     }
 }
@@ -479,6 +627,145 @@ mod tests {
             ),
         ] {
             assert_eq!(delete(status).0, Err(error), "{status}");
+        }
+    }
+
+    const COLLECTIONS: &str = "https://romm.example.com/api/collections";
+
+    #[test]
+    fn collections_are_read_with_the_sign_in() {
+        let mut pocket_sync = FakePocketSync::default();
+        let body = r#"[
+            {"id": 3, "name": "Favourites", "is_public": false, "rom_ids": [1, 2]},
+            {"id": 7, "name": "Analogue Pocket", "is_public": false, "rom_ids": []}
+        ]"#;
+        pocket_sync.respond("GET", COLLECTIONS, 200, body);
+        let collections = collections(
+            &mut pocket_sync,
+            &base("https://romm.example.com"),
+            &test_sign_in("rmm_secret"),
+        )
+        .unwrap();
+        let read: Vec<_> = collections.iter().map(|c| (c.id, &*c.name)).collect();
+        assert_eq!(read, [(3, "Favourites"), (7, "Analogue Pocket")]);
+        assert_eq!(
+            pocket_sync.sent[0].headers,
+            [("Authorization", "Bearer rmm_secret".to_string())]
+        );
+    }
+
+    #[test]
+    fn romm_may_refuse_to_list() {
+        for (status, error) in [
+            (401, ListError::Rejected),
+            (403, ListError::NotAllowed),
+            (500, ListError::Request(RequestError::Unexpected(500))),
+        ] {
+            let mut pocket_sync = FakePocketSync::default();
+            pocket_sync.respond("GET", COLLECTIONS, status, &test_error_response("x"));
+            let listed = collections(
+                &mut pocket_sync,
+                &base("https://romm.example.com"),
+                &test_sign_in("rmm_secret"),
+            );
+            assert_eq!(listed.unwrap_err(), error, "{status}");
+        }
+    }
+
+    /// The URL of the page of collection 7's games starting at `offset`.
+    fn games_page(offset: usize) -> String {
+        format!(
+            "https://romm.example.com/api/roms?collection_id=7&with_files=true\
+             &with_provider_metadata=false&with_char_index=false&with_filter_values=false\
+             &with_rom_id_index=false&order_by=id&order_dir=asc&limit=200&offset={offset}"
+        )
+    }
+
+    /// A page of games with IDs `ids`, each with one file, as RomM sends it.
+    fn games_body(ids: impl Iterator<Item = u64>) -> String {
+        let items: Vec<_> = ids
+            .map(|id| {
+                json::json!({
+                    "id": id,
+                    "name": format!("Game {id}"),
+                    "platform_slug": "gb",
+                    "fs_name": format!("Game {id}.gb"),
+                    "files": [{
+                        "id": id * 10,
+                        "file_name": format!("Game {id}.gb"),
+                        "file_size_bytes": 32768,
+                        "md5_hash": "8e2ab8b3ef6f2d1e8e2ab8b3ef6f2d1e",
+                        "category": null,
+                        "archive_members": null
+                    }]
+                })
+            })
+            .collect();
+        json::json!({ "items": items, "total": null, "limit": 200, "offset": 0 }).to_string()
+    }
+
+    #[test]
+    fn a_collections_games_are_read_a_page_at_a_time() {
+        let mut pocket_sync = FakePocketSync::default();
+        pocket_sync.respond("GET", &games_page(0), 200, &games_body(1..=200));
+        pocket_sync.respond("GET", &games_page(200), 200, &games_body(201..=201));
+        let games = collection_games(
+            &mut pocket_sync,
+            &base("https://romm.example.com"),
+            &test_sign_in("rmm_secret"),
+            7,
+        )
+        .unwrap();
+        assert_eq!(games.len(), 201);
+        assert_eq!(pocket_sync.sent.len(), 2);
+        let last = &games[200];
+        assert_eq!((last.id, last.name.as_deref()), (201, Some("Game 201")));
+        assert_eq!(last.files[0].file_name, "Game 201.gb");
+        assert_eq!(last.files[0].file_size_bytes, 32768);
+    }
+
+    #[test]
+    fn a_games_archive_members_are_read() {
+        let mut pocket_sync = FakePocketSync::default();
+        let body = r#"{"items": [{
+            "id": 4, "name": null, "platform_slug": "gba",
+            "files": [{
+                "id": 40, "file_name": "Game.zip", "file_size_bytes": 1000,
+                "md5_hash": null, "category": "game",
+                "archive_members": [{"name": "Game.gba", "size": 4194304, "crc_hash": "0a1b2c3d",
+                                     "md5_hash": "1f2e3d4c5b6a79881f2e3d4c5b6a7988", "sha1_hash": null}]
+            }]
+        }]}"#;
+        pocket_sync.respond("GET", &games_page(0), 200, body);
+        let games = collection_games(
+            &mut pocket_sync,
+            &base("https://romm.example.com"),
+            &test_sign_in("rmm_secret"),
+            7,
+        )
+        .unwrap();
+        let file = &games[0].files[0];
+        assert_eq!(games[0].name, None);
+        assert_eq!(file.category.as_deref(), Some("game"));
+        let members = file.archive_members.as_ref().unwrap();
+        assert_eq!((&*members[0].name, members[0].size), ("Game.gba", 4194304));
+    }
+
+    #[test]
+    fn only_game_and_uncategorised_files_are_the_game() {
+        let file = |category: Option<&str>| GameFile {
+            id: 1,
+            file_name: "Game.gb".into(),
+            file_size_bytes: 32768,
+            md5_hash: None,
+            category: category.map(Into::into),
+            archive_members: None,
+        };
+        for category in [None, Some("game")] {
+            assert!(file(category).is_game(), "{category:?}");
+        }
+        for category in ["manual", "dlc", "hack", "patch", "update", "translation"] {
+            assert!(!file(Some(category)).is_game(), "{category}");
         }
     }
 

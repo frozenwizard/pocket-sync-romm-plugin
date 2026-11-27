@@ -33,7 +33,6 @@
     "exit": "Exit"
   },
   "log": {
-    "sync_not_ready": "Syncing isn't available yet.",
     "settings_not_ready": "Settings aren't available yet.",
     "not_a_pocket_card": "This doesn't look like a Pocket's SD card: a Pocket's card has Cores, Assets and Platforms folders. Choose the Pocket's card in Pocket Sync, then start RomM Sync again.",
     "pocket_id_unreadable": "This Pocket's ID, in romm-sync/device.json on the card, can't be read. RomM Sync won't make a new one, because RomM would then see a different Pocket. Restore the file from a backup, or delete it to sync as a new Pocket.",
@@ -68,6 +67,9 @@
     "unpair_rejected": "RomM didn't accept this Pocket's sign-in, so the Pocket can't be unpaired. Nothing has changed on the Pocket. Check the server address. If the sign-in expired, connect to pair again, then unpair. If this Pocket's device was already deleted in RomM, delete romm-sync/server.json on the card.",
     "unpair_not_allowed": "RomM didn't let this Pocket delete its device: that needs {permissions}, which pairing didn't grant. Nothing has changed on the Pocket. Delete this Pocket's device in RomM, then delete romm-sync/server.json on the card.",
     "unpair_no_device": "RomM has no device with the ID in romm-sync/server.json for this sign-in, so the Pocket can't be unpaired. Nothing has changed on the Pocket. Delete this Pocket's device in RomM, then delete romm-sync/server.json on the card.",
-    "server_file_not_deleted": "This Pocket's device is deleted in RomM, but romm-sync/server.json couldn't be deleted from the card. Delete it by hand."
+    "server_file_not_deleted": "This Pocket's device is deleted in RomM, but romm-sync/server.json couldn't be deleted from the card. Delete it by hand.",
+    "reading_collection": "Reading the {collection} collection on {host}…",
+    "no_collection": "{host} has no collection named {collection}. Make it in RomM, add games to it, then sync again.",
+    "collection_games": "Games in {collection}: {count}"
   }
 }
