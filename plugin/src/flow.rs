@@ -7,24 +7,25 @@ use crate::card::{Card, PocketId, PocketIdError, ReadError};
 use crate::pocket_sync::PocketSync;
 use crate::romm::pairing::{self, Paired, Permission, Poll, StartError};
 use crate::romm::{
-    self, BaseUrl, ConnectError, DeleteDeviceError, RequestError, SignIn, SignInCheck,
+    self, BaseUrl, ConnectError, DeleteDeviceError, GameFile, ListError, RequestError, SignIn,
+    SignInCheck,
 };
 use crate::ui::{
     self, BadServerChoice, ConnectChoice, HostMessage, Key, MenuChoice, NewDeviceChoice,
     OptionsChoice, PluginMessage, Strings, UnpairChoice,
 };
 
+/// The permissions syncing games needs (Architecture §8).
+const GAMES_PERMISSIONS: &[Permission] = &[
+    Permission::PlatformsRead,
+    Permission::RomsRead,
+    Permission::CollectionsRead,
+];
+
 /// What the plugin can't do without some permissions: the log line saying it's off, and the
 /// permissions it needs (Architecture §8).
 const FEATURES: [(Key, &[Permission]); 3] = [
-    (
-        Key::GamesOff,
-        &[
-            Permission::PlatformsRead,
-            Permission::RomsRead,
-            Permission::CollectionsRead,
-        ],
-    ),
+    (Key::GamesOff, GAMES_PERMISSIONS),
     (Key::CollectionOff, &[Permission::CollectionsWrite]),
     (
         Key::SavesOff,
@@ -36,6 +37,10 @@ const FEATURES: [(Key, &[Permission]); 3] = [
         ],
     ),
 ];
+
+/// The collection Sync now reads, until the Pocket collection can be chosen (Architecture §5.1,
+/// step 7).
+const POCKET_COLLECTION_NAME: &str = "Analogue Pocket";
 
 /// What a run remembers between calls. Later phases add the plan, pending conflicts and claimed
 /// requests.
@@ -202,10 +207,7 @@ fn answer(
             }
         }
         ui::MENU => match ui::chosen(strings, value)? {
-            MenuChoice::SyncNow => {
-                pocket_sync.log(strings.get(Key::SyncNotReady));
-                ui::menu(strings)
-            }
+            MenuChoice::SyncNow => sync_now(run, pocket_sync),
             MenuChoice::Settings => {
                 pocket_sync.log(strings.get(Key::SettingsNotReady));
                 ui::menu(strings)
@@ -260,6 +262,17 @@ fn saved_device_id(
     run.card
         .romm_device_id()
         .map_err(|error| server_file_unreadable(&run.strings, error, pocket_sync))
+}
+
+/// The address and sign-in in `server.json`, read each time like the address. `None` unless both
+/// are there. A file that can't be read is logged and ends the run (the error is `Exit`).
+fn saved_server(
+    run: &Run,
+    pocket_sync: &mut impl PocketSync,
+) -> Result<Option<(String, SignIn)>, PluginMessage> {
+    let host = saved_host(run, pocket_sync)?;
+    let sign_in = saved_sign_in(run, pocket_sync)?;
+    Ok(host.zip(sign_in))
 }
 
 /// Says `server.json` can't be read and why, and ends the run.
@@ -467,17 +480,10 @@ fn save_pairing(run: &Run, paired: &Paired, pocket_sync: &mut impl PocketSync) -
 /// Unpairs the Pocket with the address and sign-in in `server.json`, read again since the file may
 /// have changed while the plugin waited for the answer.
 fn unpair(run: &Run, pocket_sync: &mut impl PocketSync) -> PluginMessage {
-    let host = match saved_host(run, pocket_sync) {
-        Ok(host) => host,
-        Err(end) => return end,
-    };
-    let sign_in = match saved_sign_in(run, pocket_sync) {
-        Ok(sign_in) => sign_in,
-        Err(end) => return end,
-    };
-    match (host, sign_in) {
-        (Some(host), Some(sign_in)) => unpair_with(run, &host, &sign_in, pocket_sync),
-        _ => not_paired(&run.strings, pocket_sync),
+    match saved_server(run, pocket_sync) {
+        Ok(Some((host, sign_in))) => unpair_with(run, &host, &sign_in, pocket_sync),
+        Ok(None) => not_paired(&run.strings, pocket_sync),
+        Err(end) => end,
     }
 }
 
@@ -512,6 +518,73 @@ fn unpair_with(
     }
     pocket_sync.log(strings.get(Key::Unpaired));
     ui::server(strings, None)
+}
+
+/// For now, checks the server, logs each game in the `Analogue Pocket` collection with its own
+/// files, and shows the menu again. Goes back to Connect when the Pocket isn't paired, the server
+/// can't be used or RomM rejects the sign-in.
+fn sync_now(run: &Run, pocket_sync: &mut impl PocketSync) -> PluginMessage {
+    let strings = &run.strings;
+    let (host, sign_in) = match saved_server(run, pocket_sync) {
+        Ok(Some(saved)) => saved,
+        Ok(None) => {
+            pocket_sync.log(strings.get(Key::NotPaired));
+            return server_question(run, pocket_sync);
+        }
+        Err(end) => return end,
+    };
+    let Some(base) = check_server(strings, &host, pocket_sync) else {
+        return ui::connect(strings, &host);
+    };
+    let collection = ("collection", POCKET_COLLECTION_NAME);
+    // Logged first: when the server can't be reached, Extism ends the call before anything else is.
+    pocket_sync.log(&strings.fill(Key::ReadingCollection, &[collection, ("host", &host)]));
+    let collections = match romm::collections(pocket_sync, &base, &sign_in) {
+        Ok(collections) => collections,
+        Err(error) => return list_failed(strings, &host, error, pocket_sync),
+    };
+    let pocket_collection = collections
+        .iter()
+        .find(|c| c.name == POCKET_COLLECTION_NAME);
+    let Some(pocket_collection) = pocket_collection else {
+        pocket_sync.log(&strings.fill(Key::NoCollection, &[collection, ("host", &host)]));
+        return ui::menu(strings);
+    };
+    let listed = romm::collection_games(pocket_sync, &base, &sign_in, pocket_collection.id);
+    let mut games = match listed {
+        Ok(games) => games,
+        Err(error) => return list_failed(strings, &host, error, pocket_sync),
+    };
+    let count = games.len().to_string();
+    pocket_sync.log(&strings.fill(Key::CollectionGames, &[collection, ("count", &count)]));
+    // A developer's dump of each game's own files, until Sync now plans from them.
+    for game in &mut games {
+        game.files.retain(GameFile::is_game);
+        pocket_sync.log(&format!("{game:#?}"));
+    }
+    ui::menu(strings)
+}
+
+/// Says why RomM at `host` didn't list what Sync now asked for. Goes back to Connect, which pairs
+/// again, when RomM rejects the sign-in, and to the menu when pairing didn't grant the permissions.
+fn list_failed(
+    strings: &Strings,
+    host: &str,
+    error: ListError,
+    pocket_sync: &mut impl PocketSync,
+) -> PluginMessage {
+    match error {
+        ListError::Rejected => {
+            pocket_sync.log(strings.get(Key::SignInRejected));
+            ui::connect(strings, host)
+        }
+        ListError::NotAllowed => {
+            let needs = names(GAMES_PERMISSIONS);
+            pocket_sync.log(&strings.fill(Key::GamesOff, &[("permissions", &needs)]));
+            ui::menu(strings)
+        }
+        ListError::Request(error) => request_failed(strings, host, error, pocket_sync),
+    }
 }
 
 /// Says the Pocket isn't paired, so there's nothing to unpair, and goes back to Options.
@@ -1356,14 +1429,109 @@ mod tests {
         (question, pocket_sync.lines)
     }
 
+    const COLLECTIONS: &str = "https://romm.example.com/api/collections";
+    const GAMES: &str = "https://romm.example.com/api/roms?collection_id=7&with_files=true\
+        &with_provider_metadata=false&with_char_index=false&with_filter_values=false\
+        &with_rom_id_index=false&order_by=id&order_dir=asc&limit=200&offset=0";
+
+    /// RomM at `HOST`, accepting the saved sign-in and listing `collections`, with Tetris and its
+    /// manual in collection 7.
+    fn romm_with_collections(collections: &str) -> FakePocketSync {
+        let mut pocket_sync = romm_at(HOST);
+        pocket_sync.respond("GET", COLLECTIONS, 200, collections);
+        let games = r#"{"items": [{"id": 12, "name": "Tetris", "platform_slug": "gb", "files": [
+            {"id": 31, "file_name": "Tetris (World).gb", "file_size_bytes": 32768,
+             "md5_hash": "982ed5d2b12a0377eb14bcdc4123744e", "category": null, "archive_members": null},
+            {"id": 32, "file_name": "Tetris Manual.pdf", "file_size_bytes": 1048576,
+             "md5_hash": null, "category": "manual", "archive_members": null}
+        ]}]}"#;
+        pocket_sync.respond("GET", GAMES, 200, games);
+        pocket_sync
+    }
+
     #[test]
-    fn sync_now_is_not_available_yet() {
-        let english = english();
-        let not_ready = vec![english.get(Key::SyncNotReady).to_string()];
-        assert_eq!(
-            at_menu(ui::MENU, english.get(Key::SyncNow)),
-            (ui::menu(&english), not_ready)
+    fn sync_now_logs_the_games_in_the_analogue_pocket_collection() {
+        let collections =
+            r#"[{"id": 3, "name": "Favourites"}, {"id": 7, "name": "Analogue Pocket"}]"#;
+        let mut pocket_sync = romm_with_collections(collections);
+        let question = play(
+            &signed_in_card(),
+            &mut pocket_sync,
+            &["Connect", "Sync now"],
         );
+        assert_eq!(question, ui::menu(&english()));
+        let count = english().fill(
+            Key::CollectionGames,
+            &[("collection", "Analogue Pocket"), ("count", "1")],
+        );
+        let at = pocket_sync.lines.iter().position(|line| *line == count);
+        let dump = &pocket_sync.lines[at.expect("the count is logged") + 1];
+        assert!(dump.contains("Tetris (World).gb"), "{dump}");
+        assert!(!dump.contains("Tetris Manual.pdf"), "{dump}");
+        assert_eq!(pocket_sync.sent.last().unwrap().url, GAMES);
+        assert_no_secrets(&pocket_sync.lines);
+    }
+
+    #[test]
+    fn sync_now_without_the_analogue_pocket_collection_says_so() {
+        let mut pocket_sync = romm_with_collections(r#"[{"id": 3, "name": "Favourites"}]"#);
+        let question = play(
+            &signed_in_card(),
+            &mut pocket_sync,
+            &["Connect", "Sync now"],
+        );
+        assert_eq!(question, ui::menu(&english()));
+        let none = english().fill(
+            Key::NoCollection,
+            &[("collection", "Analogue Pocket"), ("host", HOST)],
+        );
+        assert_eq!(pocket_sync.lines.last(), Some(&none));
+    }
+
+    #[test]
+    fn sync_now_checks_the_server_first() {
+        let mut pocket_sync = romm_at(HOST);
+        // The heartbeat answers Connect, then Sync now.
+        pocket_sync.respond("GET", HEARTBEAT, 404, "Not Found");
+        let question = play(
+            &signed_in_card(),
+            &mut pocket_sync,
+            &["Connect", "Sync now"],
+        );
+        assert_eq!(question, ui::connect(&english(), HOST));
+        let not_romm = english().fill(Key::NotRomm, &[("host", HOST), ("status", "404")]);
+        assert_eq!(pocket_sync.lines.last(), Some(&not_romm));
+        assert!(pocket_sync.sent.iter().all(|sent| sent.url != COLLECTIONS));
+    }
+
+    #[test]
+    fn sync_now_with_a_rejected_sign_in_offers_connect_to_pair_again() {
+        let mut pocket_sync = romm_at(HOST);
+        let rejected = test_error_response("Not authenticated");
+        pocket_sync.respond("GET", COLLECTIONS, 401, &rejected);
+        let question = play(
+            &signed_in_card(),
+            &mut pocket_sync,
+            &["Connect", "Sync now"],
+        );
+        assert_eq!(question, ui::connect(&english(), HOST));
+        let line = english().get(Key::SignInRejected).to_string();
+        assert_eq!(pocket_sync.lines.last(), Some(&line));
+    }
+
+    #[test]
+    fn sync_now_without_permission_to_read_games_says_syncing_games_is_off() {
+        let mut pocket_sync = romm_at(HOST);
+        pocket_sync.respond("GET", COLLECTIONS, 403, &test_error_response("Forbidden"));
+        let question = play(
+            &signed_in_card(),
+            &mut pocket_sync,
+            &["Connect", "Sync now"],
+        );
+        assert_eq!(question, ui::menu(&english()));
+        let needs = ("permissions", "platforms.read, roms.read, collections.read");
+        let off = english().fill(Key::GamesOff, &[needs]);
+        assert_eq!(pocket_sync.lines.last(), Some(&off));
     }
 
     #[test]

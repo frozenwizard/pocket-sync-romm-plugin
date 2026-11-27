@@ -59,7 +59,6 @@ keys! {
     SyncNow => "menu.sync_now",
     Settings => "menu.settings",
     Exit => "menu.exit",
-    SyncNotReady => "log.sync_not_ready",
     SettingsNotReady => "log.settings_not_ready",
     NotAPocketCard => "log.not_a_pocket_card",
     PocketIdUnreadable => "log.pocket_id_unreadable",
@@ -95,6 +94,9 @@ keys! {
     UnpairNotAllowed => "log.unpair_not_allowed",
     UnpairNoDevice => "log.unpair_no_device",
     ServerFileNotDeleted => "log.server_file_not_deleted",
+    ReadingCollection => "log.reading_collection",
+    NoCollection => "log.no_collection",
+    CollectionGames => "log.collection_games",
 }
 
 /// The strings for one language.
