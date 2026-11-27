@@ -193,9 +193,8 @@ fn answer(
             }
         },
         ui::UNPAIR_NEW_DEVICE => {
-            let choice = ui::chosen(strings, value)?;
             let held = held_pairing(run);
-            match choice {
+            match ui::chosen(strings, value)? {
                 UnpairChoice::Unpair => {
                     unpair_with(run, &held.host, &held.paired.sign_in, pocket_sync)
                 }
@@ -348,8 +347,9 @@ fn check_server(
 }
 
 /// Checks RomM still accepts the sign-in in `server.json`, pairing the Pocket when there's none or
-/// RomM rejects it, then shows the menu, or asks first when pairing gave the Pocket a new device. The sign-in is kept when the address changes, so a server
-/// that moved needs no pairing, and a different server rejects it.
+/// RomM rejects it, then shows the menu, or asks first when pairing gave the Pocket a new device.
+/// The sign-in is kept when the address changes, so a server that moved needs no pairing, and a
+/// different server rejects it.
 fn sign_in(
     run: &mut Run,
     host: &str,
@@ -445,7 +445,7 @@ fn pair(
     save_pairing(run, &paired, pocket_sync)
 }
 
-/// The pairing the new-device questions are about, which `handle` keeps while they wait.
+/// The pairing the new-device questions are about, held in `Run::new_device`.
 fn held_pairing(run: &Run) -> &NewDevice {
     run.new_device
         .as_ref()
@@ -687,18 +687,22 @@ mod tests {
         }
     }
 
+    /// Pocket Sync's reply giving `value` as the answer to the question named `name`.
+    fn answer_to(name: &str, value: &str) -> HostMessage {
+        HostMessage::Answer {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+
     /// Starts a run on the card at `root`, then gives each answer in turn to the question waiting.
     /// Returns the last question.
     fn play(root: &TempDir, pocket_sync: &mut FakePocketSync, answers: &[&str]) -> PluginMessage {
         let (mut run, mut question) = start("en-US", Card::new(root.path()), pocket_sync);
         for value in answers {
             let run = run.as_mut().expect("a run is going");
-            let name = question.name().expect("a question is waiting").to_string();
-            let answer = HostMessage::Answer {
-                name,
-                value: value.to_string(),
-            };
-            question = handle(answer, run, pocket_sync);
+            let name = question.name().expect("a question is waiting");
+            question = handle(answer_to(name, value), run, pocket_sync);
         }
         question
     }
@@ -780,10 +784,7 @@ mod tests {
         let mut pocket_sync = FakePocketSync::default();
         let mut run = started(&root, &mut pocket_sync);
         fs::write(root.path().join("romm-sync/server.json"), "{").unwrap();
-        let connect = HostMessage::Answer {
-            name: ui::CONNECT.into(),
-            value: "Connect".into(),
-        };
+        let connect = answer_to(ui::CONNECT, "Connect");
         assert_eq!(
             handle(connect, &mut run, &mut pocket_sync),
             PluginMessage::Exit
@@ -986,18 +987,12 @@ mod tests {
         let root = card_with_a_deleted_device();
         let mut pocket_sync = romm_with_a_new_device();
         let mut run = started(&root, &mut pocket_sync);
-        let connect = HostMessage::Answer {
-            name: ui::CONNECT.into(),
-            value: "Connect".into(),
-        };
+        let connect = answer_to(ui::CONNECT, "Connect");
         assert_eq!(
             handle(connect, &mut run, &mut pocket_sync),
             ui::new_device(&english(), HOST)
         );
-        let pair = HostMessage::Answer {
-            name: ui::NEW_DEVICE.into(),
-            value: "Pair as new device".into(),
-        };
+        let pair = answer_to(ui::NEW_DEVICE, "Pair as new device");
         assert_eq!(
             handle(pair, &mut run, &mut pocket_sync),
             ui::menu(&english())
@@ -1076,11 +1071,7 @@ mod tests {
             (ui::UNPAIR_NEW_DEVICE, "Cancel", true),
             (ui::NEW_DEVICE, "Cancel", false),
         ] {
-            let answer = HostMessage::Answer {
-                name: name.into(),
-                value: value.into(),
-            };
-            handle(answer, &mut run, &mut pocket_sync);
+            handle(answer_to(name, value), &mut run, &mut pocket_sync);
             assert_eq!(run.new_device.is_some(), held, "{value} to {name}");
         }
     }
@@ -1207,10 +1198,7 @@ mod tests {
         let mut pocket_sync = romm_at(other);
         let mut run = started(&root, &mut pocket_sync);
         Card::new(root.path()).save_server_host(other).unwrap();
-        let connect = HostMessage::Answer {
-            name: ui::CONNECT.into(),
-            value: "Connect".into(),
-        };
+        let connect = answer_to(ui::CONNECT, "Connect");
         assert_eq!(
             handle(connect, &mut run, &mut pocket_sync),
             ui::menu(&english())
@@ -1364,11 +1352,7 @@ mod tests {
             new_device: None,
         };
         let mut pocket_sync = FakePocketSync::default();
-        let answer = HostMessage::Answer {
-            name: name.into(),
-            value: value.into(),
-        };
-        let question = handle(answer, &mut run, &mut pocket_sync);
+        let question = handle(answer_to(name, value), &mut run, &mut pocket_sync);
         (question, pocket_sync.lines)
     }
 
