@@ -136,12 +136,12 @@ The card is the whole record: any computer that syncs the Pocket sees the same P
 2. **Check the card:** it must look like a Pocket card (`Cores/`, `Assets/`, `Platforms/`), or the run ends before anything is written.
 3. **Pocket ID:** if `romm-sync/device.json` is missing, create it with a new random ID. If it's there but can't be read, the run ends and the file is left alone: a new ID would make RomM see a different Pocket.
 4. **Server:** if the card has no `romm-sync/server.json`, ask for the address (`Text`) and save it there. It must start with `http://` or `https://` and name a server, with an optional port and path; the plugin checks this before saving, with the URL parser Extism uses, because Extism ends the call on an address it can't parse ([3.2](#32-the-plugin-host-pocket-sync), network failures). An answer that isn't an address, an empty one included, offers **Try again** and **Cancel**: on first setup Cancel ends the run, and when changing the address it goes back to Options. Then check `GET /api/heartbeat` answers and is 5.4 or newer.
-5. **Pair:** start pairing with the Pocket ID and the name "Analogue Pocket", log the approval link and code, open RomM's approval page (`open_url`), and poll every 2 seconds until it's approved, denied or expired ([8.1](#81-pairing)). The approver can rename the device on that page. Save the token as `api_key` and RomM's device ID as `romm_device_id` in `server.json`. Check the granted permissions against the ones requested and say which features are off if any were left out. A denial, an expired code or a failed request offers Connect again.
-6. **Check the server:** if `server.json` already had a RomM device ID and it differs from the one pairing returned, the address now points at a different RomM server ([13](#13-safety-rules), rule 8).
+5. **Pair:** start pairing with the Pocket ID and the name "Analogue Pocket", log the approval link and code, open RomM's approval page (`open_url`), and poll every 2 seconds until it's approved, denied or expired ([8.1](#81-pairing)). The approver can rename the device on that page. A denial, an expired code or a failed request offers Connect again.
+6. **Save the sign-in:** if `server.json` has no RomM device ID, or has the one pairing returned, save the token as `api_key` and the device ID as `romm_device_id` there. A different ID means pairing gave the Pocket a new device: ask **Pair as new device**, **Unpair** or **Cancel** before saving anything ([13](#13-safety-rules), rule 8). Once saved, check the granted permissions against the ones requested and say which features are off if any were left out.
 7. **Choose the Pocket collection:** offer **Use "Analogue Pocket"** (created if it doesn't exist) or the user's other regular collections as buttons. Smart and virtual collections are never listed. Save the choice as `collection` in `server.json`.
 8. Offer **Sync now**.
 
-Once `server.json` exists, a run starts with **Connect**, **Options** and **Exit**. Connect runs the heartbeat check (step 4), checks the saved sign-in by reading the Pocket's device (`GET /api/devices/{romm_device_id}`), pairs if there's no sign-in or RomM rejects it (steps 5 and 6), asks for a collection if there's none (step 7), and shows the menu. Options is described in [5.5](#55-options-and-settings).
+Once `server.json` exists, a run starts with **Connect**, **Options** and **Exit**. Connect runs the heartbeat check (step 4), checks the saved sign-in by reading the Pocket's device (`GET /api/devices/{romm_device_id}`), pairs if there's no sign-in or RomM rejects it (steps 5 and 6), saying the sign-in expired or the Pocket's device was deleted in RomM, asks for a collection if there's none (step 7), and shows the menu. Options is described in [5.5](#55-options-and-settings).
 
 The same Pocket on a second computer needs no setup: the card carries the address, sign-in and collection. If that computer reaches the server at a different address, the user changes it in Options, which changes it for every computer.
 
@@ -178,7 +178,7 @@ Whichever copy isn't chosen is kept ([10.5](#105-conflicts-and-keeping-the-other
 ### 5.5 Options and Settings
 
 **Options**, on the first screen, works before connecting, so a run that ended on a bad address can still reach it:
-- **Change server address:** asks for the new address, saves it in `server.json` (keeping the rest of the file, the sign-in included) and connects. A server that moved accepts the sign-in, so there's no pairing again. A different server rejects it, so Connect pairs, and the wrong-server check catches the change ([13](#13-safety-rules), rule 8). Editing `server.json` by hand works too; the plugin reads it again each time it's needed.
+- **Change server address:** asks for the new address, saves it in `server.json` (keeping the rest of the file, the sign-in included) and connects. A server that moved accepts the sign-in, so there's no pairing again. A different server rejects it, so Connect pairs, and the device ID pairing returns differs from the saved one, which is asked about before anything is saved ([13](#13-safety-rules), rule 8). Editing `server.json` by hand works too; the plugin reads it again each time it's needed.
 - **Unpair:** asks first, then checks the server (heartbeat), deletes the Pocket's device in RomM, and deletes `server.json`, so the next step asks for an address and pairs. From M2 the question also says how many games it removes ([13](#13-safety-rules), rule 5), and Unpair removes the games RomM Sync put on the Pocket and deletes `manifest.json`, whose device ID would otherwise trip rule 8 after pairing again. The Pocket keeps `device.json` (its ID) and its saves.
   - When RomM doesn't delete the device (it doesn't accept the sign-in, pairing didn't grant `devices.write`, or the device isn't the sign-in's), the plugin says why and how to clean up by hand (in RomM, and by deleting `server.json`), changes nothing on the Pocket, and goes back to Options.
   - When RomM deleted the device but `server.json` can't be deleted, the run stops and says to delete it by hand.
@@ -247,8 +247,8 @@ Every file has a `schema` number, so a later plugin can tell an older file. `dev
 ```
 
 - `host` is the server's address, starting with `http://` or `https://`, possibly with a sub-path (`https://example.com/romm`). It's the only field required, so the file can be written by hand with just `{"host": "…"}`; the plugin fills in the rest.
-- `api_key` is the client token from pairing. `romm_device_id` is RomM's ID for this Pocket's device, returned by pairing. It says which RomM server the manifest's IDs belong to: pairing with a different server gives a different device ID ([13](#13-safety-rules), rule 8).
-- Connect checks the sign-in each time. When either field is missing, `api_key` holds a space or a line break (which can't be sent), or RomM rejects it (revoked, expired, or from another server), the Pocket pairs again.
+- `api_key` is the client token from pairing. `romm_device_id` is RomM's ID for this Pocket's device, returned by pairing. It says which RomM server the manifest's IDs belong to: pairing with a different server, or after the device was deleted in RomM, gives a different device ID ([13](#13-safety-rules), rule 8).
+- Connect checks the sign-in each time. When either field is missing, `api_key` holds a space or a line break (which can't be sent), or RomM rejects it (expired, revoked, its device deleted, or from another server), the Pocket pairs again.
 - The permissions granted and the token's expiry aren't stored. RomM narrows a token's permissions to whatever its user's role allows at the time, so a saved list could be wrong, and Connect's check catches an expired token.
 - `collection` is the Pocket collection.
 - Unpair deletes the whole file ([5.5](#55-options-and-settings)); `device.json` stays.
@@ -552,6 +552,11 @@ start ──► Check card, Pocket ID ──► [no server.json] ──Text─�
 Options ──► Change server address ──Text──► Connect
         └─► Unpair ──Choice──► Heartbeat ──► Delete the device in RomM ──► Delete server.json ──Text──► Connect
 Connect ──► Heartbeat ──► Sign-in check ──► [none, or rejected] Pair ──► [no collection] ──Choice──► Menu
+                                                                     └─► [new device] ──Choice──► New device
+New device ──► Pair as new device ──► [no collection] ──Choice──► Menu
+           └─► Unpair ──Choice──► Heartbeat ──► Delete the new device in RomM ──► Delete server.json ──Text──► Connect
+                      └─► Cancel ──Choice──► New device
+           └─► Cancel ──Choice──► Connect / Options / Exit
 Menu ──Sync now──► (M6 Claim) ──► Plan ──► Saves ──Choice per conflict──► Confirm ──Choice──►
        Transfer ──► New-game saves ──► (M6 Report) ──► Finish ──► Menu
 Menu ──Settings──► change collection / Unpair
@@ -569,7 +574,11 @@ Menu ──Exit──► Exit
 5. **Ask before deleting games,** and say how many and which.
 6. **Saves are never lost.** The copy not chosen in a conflict is kept ([10.5](#105-conflicts-and-keeping-the-other-copy)), every card save the plugin replaces or deletes is backed up in `host/backups/`, and saves of removed games stay on the card.
 7. **Card full:** stop the transfer, delete the current `.part`, write the manifest, and say how much was left. (M6) Waiting install requests stay unreported.
-8. **Wrong server:** if pairing returns a RomM device ID different from the one in `server.json`, or the manifest's `romm_device_id` differs from `server.json`'s, the address now points at a different RomM server. Don't sync until the user confirms. Confirming starts fresh with this server: `collection` is cleared, the manifest's game records are cleared (the files become unmanaged and are never deleted), and matching files are adopted again on the next plan.
+8. **New device:** a RomM device ID from pairing that differs from the one in `server.json` means the Pocket's device was deleted in RomM, or the address points at a different RomM server; the plugin can't tell which. It saves nothing until the user chooses:
+   - **Pair as new device** saves the new sign-in and starts fresh with it. (M2) `collection` is cleared and the manifest's game records are cleared (the files become unmanaged and are never deleted), so matching files are adopted again on the next plan.
+   - **Unpair** asks first, then unpairs as Options does ([5.5](#55-options-and-settings)) with the new sign-in, so it deletes the new device in RomM. Cancel on that question comes back to this one.
+   - **Cancel** saves nothing and offers Connect again. The new device stays in RomM, and the next Connect asks again.
+   - (M2) A manifest whose `romm_device_id` differs from `server.json`'s (a run cut off before the manifest was cleared, or a hand edit) gets the same question, with the sign-in in `server.json`. Nothing syncs until the user chooses.
 9. **Tokens never appear in logs.** An error about one of the plugin's files says where the problem is (line, column and field) and never quotes the file.
 
 ## 14. Performance
@@ -649,7 +658,7 @@ Each milestone is small, tested commits, with its tests passing before the next 
 | # | Milestone | Done when |
 |---|---|---|
 | M0 | Skeleton | The plugin builds for `wasm32-wasip1`, runs in `demo_host`, shows a menu, logs, and keeps state between calls. Its text comes from bundled locale files with English as the fallback (the language is fixed at `en-US` for now), and answers are matched to the choice they stand for, not to English text |
-| M1 | Server and pairing | Pocket ID, server address in `server.json` with Connect and Options, heartbeat check, pairing with polling, token in `server.json`, permission check, Unpair, wrong-server check |
+| M1 | Server and pairing | Pocket ID, server address in `server.json` with Connect and Options, heartbeat check, pairing with polling, token in `server.json`, permission check, Unpair, new-device check |
 | M2 | Games: add | Choose or create the Pocket collection; plan and copy GB, GBC and GBA games; manifest; staging; `.part` then rename |
 | M3 | Games: update, rename, remove, adopt | Hash-based updates, renames, confirmed removals, adopting existing files, recovery after a cut-off run, `Range` downloads |
 | M4 | Saves | Pocket slot, decisions, conflicts, backups, final sync for removed games |

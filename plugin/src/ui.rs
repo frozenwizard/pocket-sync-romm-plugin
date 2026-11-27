@@ -49,6 +49,8 @@ pub const BAD_SERVER: &str = "bad-server";
 pub const CONNECT: &str = "connect";
 pub const OPTIONS: &str = "options";
 pub const UNPAIR: &str = "unpair";
+pub const NEW_DEVICE: &str = "new-device";
+pub const UNPAIR_NEW_DEVICE: &str = "unpair-new-device";
 pub const MENU: &str = "menu";
 
 /// The buttons of a `Choice` question.
@@ -198,6 +200,43 @@ pub fn unpair(strings: &Strings) -> PluginMessage {
     choice::<UnpairChoice>(strings, UNPAIR, strings.get(Key::UnpairQuery).into())
 }
 
+/// A button on the question asked when pairing gives the Pocket a new device.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum NewDeviceChoice {
+    PairAsNewDevice,
+    Unpair,
+    Cancel,
+}
+
+impl Choices for NewDeviceChoice {
+    const ALL: &'static [Self] = &[
+        NewDeviceChoice::PairAsNewDevice,
+        NewDeviceChoice::Unpair,
+        NewDeviceChoice::Cancel,
+    ];
+
+    fn label(self) -> Key {
+        match self {
+            NewDeviceChoice::PairAsNewDevice => Key::PairAsNewDevice,
+            NewDeviceChoice::Unpair => Key::Unpair,
+            NewDeviceChoice::Cancel => Key::Cancel,
+        }
+    }
+}
+
+/// Says pairing with the server at `host` gave the Pocket a new device, and asks what to do with it.
+pub fn new_device(strings: &Strings, host: &str) -> PluginMessage {
+    let query = strings.fill(Key::NewDeviceQuery, &[("host", host)]);
+    choice::<NewDeviceChoice>(strings, NEW_DEVICE, query)
+}
+
+/// Asks before unpairing the Pocket from the new device pairing just gave it. The same question as
+/// `unpair`, under its own name, since its answers lead elsewhere.
+pub fn unpair_new_device(strings: &Strings) -> PluginMessage {
+    let query = strings.get(Key::UnpairQuery).into();
+    choice::<UnpairChoice>(strings, UNPAIR_NEW_DEVICE, query)
+}
+
 /// A button on the menu.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MenuChoice {
@@ -288,6 +327,7 @@ mod tests {
         labels_find_their_choice::<ConnectChoice>();
         labels_find_their_choice::<OptionsChoice>();
         labels_find_their_choice::<UnpairChoice>();
+        labels_find_their_choice::<NewDeviceChoice>();
         labels_find_their_choice::<MenuChoice>();
     }
 
@@ -303,6 +343,7 @@ mod tests {
             labels::<ConnectChoice>(),
             labels::<OptionsChoice>(),
             labels::<UnpairChoice>(),
+            labels::<NewDeviceChoice>(),
             labels::<MenuChoice>(),
         ];
         for (tag, _) in strings::LOCALES {

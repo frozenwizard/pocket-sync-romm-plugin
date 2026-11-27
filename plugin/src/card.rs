@@ -173,6 +173,13 @@ impl Card {
             .and_then(|(api_key, device_id)| SignIn::new(api_key, device_id)))
     }
 
+    /// RomM's ID for the Pocket's device, from `romm_device_id` in `romm-sync/server.json`, even
+    /// when there's no sign-in to go with it. `None` when there's none.
+    pub fn romm_device_id(&self) -> Result<Option<String>, ReadError> {
+        let file = self.read::<Map<String, Value>>(SERVER_FILE)?;
+        Ok(text_field(file.as_ref(), "romm_device_id"))
+    }
+
     /// Sets `host` in `romm-sync/server.json`, keeping the rest of the file, sign-in included. A
     /// missing file is created. One that can't be read is left alone, since it may hold the
     /// sign-in.
@@ -577,6 +584,30 @@ mod tests {
         ] {
             fs::write(server_file(&root), file.to_string()).unwrap();
             assert_eq!(card.sign_in(), Ok(None), "{file}");
+        }
+    }
+
+    #[test]
+    fn the_romm_device_id_is_read_without_a_sign_in() {
+        let root = test_card();
+        fs::create_dir(root.path().join(FOLDER)).unwrap();
+        let card = Card::new(root.path());
+        assert_eq!(card.romm_device_id(), Ok(None));
+        for (file, device_id) in [
+            (json!({"romm_device_id": "c1a2"}), Some("c1a2")),
+            (
+                json!({"api_key": "", "romm_device_id": " c1a2 "}),
+                Some("c1a2"),
+            ),
+            (json!({"api_key": "rmm_k", "romm_device_id": ""}), None),
+            (json!({"romm_device_id": 5}), None),
+        ] {
+            fs::write(server_file(&root), file.to_string()).unwrap();
+            assert_eq!(
+                card.romm_device_id(),
+                Ok(device_id.map(Into::into)),
+                "{file}"
+            );
         }
     }
 

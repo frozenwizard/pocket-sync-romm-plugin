@@ -98,8 +98,8 @@ pub enum ConnectError {
 #[derive(Debug, PartialEq)]
 pub enum SignInCheck {
     Accepted,
-    /// RomM doesn't accept the token (revoked, expired, or from another server), or the device ID
-    /// isn't the token's.
+    /// RomM doesn't accept the token (expired, revoked, its device deleted, or from another
+    /// server), or the device ID isn't the token's.
     Rejected,
 }
 
